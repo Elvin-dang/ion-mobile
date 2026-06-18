@@ -1,0 +1,3384 @@
+================================================================
+PLATFORM SECTION: Mobile - Building Manager App (Module 4)
+================================================================
+
+################ ID 4.1 | Authentication & Dashboard > Authentication & Dashboard ################
+
+################ ID 4.1.1 | Authentication & Dashboard > Login ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile (Android & iOS).
+- Account created by Super Admin or Building Manager via web portal.
+- BM does NOT belong to a User Group. Scope defined by buildings assigned to BM account.
+- On successful login => Dashboard (4.1.5) scoped to BM's assigned buildings.
+- If a valid session already exists => system skips Login and navigates directly to Dashboard.
+- Maximum 5 consecutive failed attempts before 15-minute lockout.
+- All connections use HTTPS/SSL with TLS 1.2+.
+--- FIELDS/COMPONENTS ---
+Screen: Login (Building Manager Mobile)
+
+- EZAxis logo - Display - Centered top
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email" - Max 100 characters
+- Password - Text field (masked) - Required - Placeholder: "Enter your password" - Min 8 characters - Show/hide password toggle icon
+- Forgot Password? - Hyperlink - Below password field - Navigates to Forgot Password (4.1.3)
+- Login - Button - Primary - Full-width - Large tap target
+- Loading indicator while authenticating
+--- USER FLOW ---
+Screen: Login (Building Manager Mobile)
+
+Preconditions:
+- No authentication required - entry point for unauthenticated BM on mobile app.
+- BM account must exist with role = Building Manager.
+- If valid session token is stored on device => system skips Login and navigates directly to Dashboard.
+
+1. App opens. System checks for stored session token on device:
+   1.1. Valid session token found => navigates directly to Dashboard (4.1.5) => flow ends.
+   1.2. No token or expired token => renders Login screen.
+
+2. BM enters email and password => taps [Login].
+   + Keyboard dismisses automatically when [Login] tapped.
+   + Loading spinner shown on [Login] button while authenticating.
+
+3. System validates fields:
+   3.1. Email empty => inline error below field: "Email is required." => does NOT authenticate.
+   3.2. Password empty => inline error: "Password is required." => does NOT authenticate.
+   3.3. Email format invalid => inline error: "Please enter a valid email address." => does NOT authenticate.
+
+4. System checks failed attempt counter:
+   4.1. >= 5 consecutive failed attempts within last 15 min => does NOT authenticate => error toast: "Too many failed attempts. Please try again in 15 minutes."
+
+5. System queries backend:
+   5.1. Email not found or role != Building Manager => does NOT create session => error toast: "Invalid email or password." => increments counter.
+   5.2. Account Status = Inactive => does NOT create session => error: "Your account is not active. Please contact the administrator."
+   5.3. Account Status = Pending (invitation not yet accepted) => does NOT create session => error: "Your account is not yet activated. Please check your email for the invitation link."
+   5.4. Account Status = Inactive => error toast: "Your account is not active. Please contact the administrator."
+   5.3. Password mismatch => does NOT create session => error toast: "Invalid email or password." => increments counter.
+   5.4. All valid:
+    + Session token stored securely on device (Keychain on iOS / Keystore on Android).
+    + Failed attempt counter reset to 0.
+    + Last login timestamp updated.
+    + Navigates to Dashboard (4.1.5) scoped to BM's assigned buildings.
+
+Edge cases:
+- Network unavailable when tapping [Login] => error toast: "No internet connection. Please check your network and try again."
+- BM's device is offline but has a valid cached session => app opens to last cached state (offline mode) if offline caching is supported; otherwise redirects to Login with message: "You are offline. Please connect to log in."
+- BM pastes email with leading/trailing spaces => system trims whitespace before validation.
+- BM has no assigned buildings (account misconfiguration) => login succeeds but Dashboard shows: "No buildings assigned to your account. Please contact the administrator."
+
+################ ID 4.1.2 | (cont) > Logout ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated Building Manager from any screen in the mobile app.
+- Logout accessible from profile/settings menu.
+- Confirmation prompt shown before executing logout.
+- On logout: session token immediately invalidated server-side and removed from device.
+--- FIELDS/COMPONENTS ---
+Component: Logout (Building Manager Mobile)
+
+Access path: Bottom navigation => Profile/More => Sign out
+
+- Sign out - Menu item - Triggers logout confirmation
+
+Alert: Confirm Sign Out
+- Message: "Are you sure you want to sign out?"
+- Sign out - Button - Destructive style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Logout (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated on mobile app.
+
+1. BM taps Profile or More icon in bottom navigation.
+2. Profile/Settings screen opens. BM taps [Sign out] menu item.
+3. System shows native OS alert dialog:
+   + Title: "Sign Out"
+   + Message: "Are you sure you want to sign out?"
+   + Buttons: [Sign out] (destructive style) | [Cancel].
+4a. BM taps [Sign out]:
+   + Session token invalidated server-side immediately.
+   + Session token removed from device secure storage (Keychain/Keystore).
+   + Any cached data cleared from app local storage.
+   + App navigates to Login screen (4.1.1).
+4b. BM taps [Cancel]:
+   + Alert dismisses.
+   + BM remains on Profile/Settings screen, fully authenticated.
+
+Edge cases:
+- Network unavailable when logout tapped => system still removes local token and navigates to Login. Server-side invalidation queued and retried when online (or token expires naturally server-side).
+- BM's session expires naturally while app is in background => on next foreground action requiring API, system detects 401 response => clears local token => navigates to Login with toast: "Your session has expired. Please log in again."
+- App force-closed and reopened => system re-checks stored token on app open (step 1 of Login flow).
+
+################ ID 4.1.3 | (cont) > Forgot Password ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by unauthenticated Building Managers from the Login screen.
+- Same OTP-based 2-screen flow as web (4.1.3 mirrors 3.1.3 logic).
+- OTP sent to registered email via AWS SES/SendGrid.
+- OTP validity: 10 minutes (assumed - flagged for BA review).
+- After reset => navigates to Login screen (4.1.1).
+--- FIELDS/COMPONENTS ---
+Screen 1 - Enter Email (Mobile)
+
+- Page title: "Forgot Password"
+- Instruction text: "Enter your registered email address. We will send you a verification code."
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email"
+- Continue - Button - Primary - Full-width
+- Back to Login - Hyperlink
+
+Screen 2 - Enter OTP and New Password (Mobile)
+
+- Page title: "Reset Password"
+- Instruction text: "Enter the verification code sent to [email]."
+- OTP Code - Text field - Required - Keyboard type: numeric - 6 digits - Large input
+- Resend Code - Hyperlink - Active after 60 seconds - Shows countdown timer
+- New Password - Text field (masked) - Required - Min 8 characters - Show/hide toggle
+- Confirm New Password - Text field (masked) - Required - Must match - Show/hide toggle
+- Reset Password - Button - Primary - Full-width
+- Back to Login - Hyperlink
+--- USER FLOW ---
+Screen: Forgot Password (Building Manager Mobile)
+
+Preconditions:
+- No authentication required.
+- BM must have an active account with the provided email.
+
+Screen 1 - Enter Email:
+1. BM taps [Forgot Password?] on Login screen => Screen 1 loads.
+2. BM enters email (keyboard type: email) => taps [Continue]:
+   2.1. Empty => error: "Email is required."
+   2.2. Format invalid => error: "Please enter a valid email address."
+   2.3. Email not found in BM accounts => does NOT send OTP => error: "No account found with this email address."
+   2.4. Account Inactive => does NOT send OTP => error: "Your account is not active. Please contact the administrator."
+   2.5. Network unavailable => error: "No internet connection. Please check your network and try again."
+   2.6. Valid => OTP sent via AWS SES/SendGrid => navigates to Screen 2.
+3. BM taps [Back to Login] => navigates to Login (4.1.1). No OTP sent.
+
+Screen 2 - Enter OTP & New Password:
+4. Screen shows masked email OTP was sent to.
+5. BM enters OTP (numeric keyboard, 6 digits) / New Password / Confirm:
+   5.1. OTP empty => error: "Please enter the verification code."
+   5.2. OTP wrong format => error: "Verification code must be 6 digits."
+   5.3. OTP incorrect => error: "Invalid verification code. Please try again." After 5 wrong attempts => OTP invalidated => must restart from Screen 1.
+   5.4. OTP expired (> 10 min) => error: "This code has expired. Please request a new one." => returns to Screen 1.
+   5.5. Password < 8 chars => error: "Password must be at least 8 characters."
+   5.6. Confirm mismatch => error: "Passwords do not match."
+   5.7. Network unavailable => error: "No internet connection."
+   5.8. All valid:
+    + Password updated.
+    + All active sessions (web + other mobile devices) invalidated.
+    + Navigates to Login (4.1.1).
+    + Success toast: "Password reset successfully. Please log in with your new password."
+6. [Resend Code] (active after 60s with countdown timer):
+   + New OTP sent => previous OTP invalidated => countdown resets.
+
+Edge cases:
+- Email delivery fails => "Failed to send verification code. Please try again later."
+- BM closes app mid-reset and reopens => returns to Login screen (Screen 2 state not persisted).
+
+################ ID 4.1.4 | (cont) > Multi-Language Switch ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated Building Manager from any screen.
+- Supports English (EN) and Vietnamese (VI).
+- Language switch applies immediately to all UI elements without app restart.
+- Selected language persisted per user account across sessions and devices.
+--- FIELDS/COMPONENTS ---
+Component: Language Switcher (Building Manager Mobile)
+
+Access path: Profile / Settings => Language
+
+- Language - Selection list or toggle
+- Options: English (EN) | Ti?ng Vi?t (VI)
+- Currently selected language highlighted
+- Tap to change - applies immediately
+--- USER FLOW ---
+Flow: Multi-Language Switch (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated.
+- Language setting accessible from Profile/Settings.
+
+1. BM navigates to Profile => Settings => Language.
+2. Current language highlighted in a selection list.
+3. BM taps alternate language (EN or VI):
+   3.1. App immediately re-renders all UI text in selected language without restart.
+   3.2. Data content (asset names, descriptions) is NOT translated.
+   3.3. System saves preference to BM's account via API.
+   3.4. Save succeeds => preference persists across sessions and devices (web portal also reflects change).
+   3.5. Save fails (network issue) => UI still shows new language for current session => error toast: "Failed to save language preference. The change will apply to this session only." => reverts to previous on next login.
+
+Edge cases:
+- BM switches language while a form is open (e.g., during Create WO) => field values preserved; labels/placeholders update.
+- BM switches language while offline => UI changes locally but server sync fails => preference reverts on next login.
+
+################ ID 4.1.5 | (cont) > Dashboard ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Simplified dashboard - KPI cards only, no complex charts.
+- Scoped to BM's assigned buildings.
+- CONFIRMED MOBILE SCOPE: Status-transition actions available. Create/Edit/Deactivate = web-only.
+--- FIELDS/COMPONENTS ---
+Screen: Dashboard (BM Mobile)
+- Building selector - BM's buildings
+- KPI cards: Total Requests / Pending Approval / In Progress WOs / Completed WOs
+- Recent Activity list - Latest 5 updates
+- Bottom navigation: Home / Requests / Work Orders / Assets / More
+--- USER FLOW ---
+Screen: Dashboard (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Dashboard is default landing screen.
+- Scoped to BM's assigned buildings.
+
+1. App opens to Dashboard. System loads with defaults:
+   + Building: first assigned building.
+   + Date Range: last 30 days.
+
+2. System fetches and renders:
+   2.1. KPI cards (tappable, large tap targets):
+    + Total Requests / Pending Approval / In Progress WOs / Completed WOs / Closed WOs.
+    + Each card shows count + label. Count highlighted in bold.
+   2.2. Recent Activity list:
+    + Latest 5-10 activity events (new requests, WO status changes, alerts).
+    + Each item: event type icon / description / timestamp / status badge.
+    + "See all" link => navigates to full filtered list.
+   2.3. Note: No complex charts on mobile (Gantt and Trend charts are web-only). Mobile shows KPI + recent activity only.
+
+3. BM taps Building selector (dropdown or picker):
+   + Only BM's assigned buildings shown.
+   + Selects building => KPI cards re-fetch scoped to that building.
+
+4. BM taps a KPI card:
+   4.1. "Pending Approval" => navigates to Request List filtered to Pending status (no Request List screen on mobile but navigates to 4.3 view).
+   4.2. "In Progress WOs" => navigates to WO List filtered to Assigned + Started (4.4.1).
+   4.3. "Closed WOs" => navigates to WO List filtered to Closed (4.4.1).
+
+5. BM taps a Recent Activity item => navigates to the relevant Request or WO Detail screen.
+
+6. BM pulls down to refresh => re-fetches all data.
+
+7. Empty states:
+   + No recent activity => "No recent activity."
+   + No buildings assigned => "No buildings assigned. Please contact the administrator."
+
+Edge cases:
+- BM has only 1 building => Building selector not shown (pre-selected and fixed).
+- API timeout on section load => section shows: "Failed to load. Tap to retry."
+- Dashboard loads in offline mode => shows cached data with banner: "Showing cached data. Pull to refresh when online."
+
+################ ID 4.1.6 | (cont) > Account Settings ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated Building Manager on mobile.
+- Allows updating profile information and changing password.
+- Accessible from Profile / Settings menu in bottom navigation.
+--- FIELDS/COMPONENTS ---
+Screen: Account Settings (Building Manager Mobile)
+
+Access path: Bottom navigation => Profile
+
+Section: Personal Information
+- Avatar - Circular display - Tap to change (camera or gallery)
+- Full Name - Text field - Required - Pre-filled - Max 100 characters
+- Phone Number - Text field - Optional - Pre-filled - Keyboard type: phone
+- Save - Button - Primary - Full-width
+
+Section: Change Password
+- Current Password - Text field (masked) - Required - Show/hide toggle
+- New Password - Text field (masked) - Required - Min 8 characters - Show/hide toggle
+- Confirm New Password - Text field (masked) - Required - Must match - Show/hide toggle
+- Save - Button - Primary - Full-width
+--- USER FLOW ---
+Flow: Account Settings (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Accessible from Profile in bottom navigation.
+
+Update Profile:
+1. BM navigates to Profile => Account Settings.
+2. Modifies Full Name, Phone, or Avatar.
+   + Avatar: tap current avatar => options appear: "Take Photo" (camera) / "Choose from Library" (gallery).
+3. Taps [Save]:
+   3.1. Full Name empty => error: "Full name is required."
+   3.2. Full Name > 100 chars => error: "Full name must not exceed 100 characters."
+   3.3. Avatar: JPG/PNG only, max 2MB. Invalid type => error: "Only JPG and PNG files are accepted." Too large => error: "File size must not exceed 2 MB."
+   3.4. Network unavailable => error: "No internet connection. Please try again."
+   3.5. Valid => profile updated => avatar updates in Profile header immediately => success toast: "Profile updated successfully."
+4. Taps [Cancel] => navigates back, no change.
+
+Change Password:
+5. BM navigates to Change Password section (separate screen or section in Account Settings).
+6. Enters Current Password / New Password / Confirm (all masked, show/hide toggle).
+7. Taps [Save]:
+   7.1. Current Password empty => error: "Current password is required."
+   7.2. Current Password incorrect => error: "Current password is incorrect."
+   7.3. New Password < 8 chars => error: "Password must be at least 8 characters."
+   7.4. Confirm mismatch => error: "Passwords do not match."
+   7.5. Network unavailable => error: "No internet connection. Please try again."
+   7.6. Valid => password updated => all other sessions (web + other mobile devices) invalidated => current session remains active => success toast: "Password changed successfully."
+
+Edge cases:
+- BM takes photo for avatar and camera permission not granted => app shows system permission request. If denied => error: "Camera permission is required to take a photo. Please enable it in your device settings."
+- Gallery permission not granted (iOS) => same permission request flow.
+- Network error => "Failed to update. Please try again." => no partial save.
+
+################ ID 4.2 | Asset Management (Read-only) > Asset Management (Read-only) ################
+
+################ ID 4.2.1 | Asset Management (Read-only) > View Asset List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile. Read-only - no create, edit, or deactivate actions on mobile.
+- Scoped to BM's assigned buildings only.
+- Displays asset list with search and filters.
+- Tap asset => View Asset Detail (4.2.2).
+--- FIELDS/COMPONENTS ---
+Screen: Asset List (Building Manager Mobile - Read-only)
+
+- Search bar - Text field - Placeholder: "Search by name or code" - top of screen
+- Filter icon - Opens filter panel:
+  + Building - Dropdown - BM's assigned buildings only
+  + Asset System - Dropdown - All Systems
+  + Status - Dropdown - All / Active / Inactive
+- Asset list - Scrollable:
+  + Each item: Asset Code / Asset Name / Asset System / Location (Floor/Area) / Status badge
+  + Tap item => Asset Detail (4.2.2)
+- Pull-to-refresh
+- Empty state: "No assets found."
+- Load more on scroll (pagination)
+--- USER FLOW ---
+Screen: Asset List (Building Manager Mobile - Read-only)
+
+Preconditions:
+- BM authenticated. List scoped to BM's assigned buildings. Read-only (no create/edit/deactivate on mobile).
+
+1. BM navigates to Assets in bottom navigation.
+2. System loads asset list scoped to BM's assigned buildings with defaults (All Systems / All Status).
+3. List items: Asset Code / Asset Name / Asset System / Location (Floor/Area) / Status badge.
+4. BM taps search bar => keyboard opens => types name or code => list filters in real time.
+5. BM taps filter icon => filter panel slides up:
+   + Building (BM's assigned only) / Asset System / Status (All / Active / Inactive).
+   + Taps [Apply] => list updates. Taps [Reset] => clears filters.
+6. BM taps an asset item => Asset Detail (4.2.2).
+7. BM pulls down => refreshes list.
+8. BM scrolls to bottom => loads next page (infinite scroll or Load More button).
+9. Empty state: "No assets found."
+
+No [+ New Asset] / Edit / Deactivate actions shown. Read-only.
+
+Edge cases:
+- Network unavailable => shows cached asset list with banner: "Showing cached data." Pull to refresh when online.
+- List fails to load and no cache => error: "Failed to load assets. Please check your connection and try again."
+
+################ ID 4.2.2 | (cont) > View Asset Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile. Read-only - no edit or deactivate on mobile.
+- Scoped to BM's assigned buildings only.
+- Full asset detail: all sections + maintenance history.
+--- FIELDS/COMPONENTS ---
+Screen: Asset Detail (Building Manager Mobile - Read-only)
+
+- Back arrow
+- Asset Name - Display - Large bold title
+- QR Code - Display - Tap to zoom
+- Status badge - Active / Inactive
+
+Section: Asset Classification (read-only)
+- Asset System / Asset Sub-system / Asset Type
+
+Section: Location (read-only)
+- Building / Floor / Area/Unit
+
+Section: Asset Details (read-only)
+- Asset Code / Model / Serial Number / Brand / Purchase Date / Status
+
+Section: Maintenance History (read-only)
+- List: WO ID / Plan Name / Round / Completed Date / Technician / Status
+- Tap WO ID => WO Detail
+- Empty state: "No maintenance history."
+
+Section: Pending WOs (read-only)
+- List: WO ID / Type / Status
+- Tap WO ID => WO Detail
+- Empty state: "No pending work orders."
+--- USER FLOW ---
+Screen: Asset Detail (Building Manager Mobile - Read-only)
+
+Preconditions:
+- BM authenticated. Asset within BM's assigned buildings scope. Read-only.
+
+1. BM taps asset from list => Asset Detail loads.
+2. System renders:
+   + Header: Asset Name (bold) / Asset Code / Status badge.
+   + QR Code image (tap to zoom in full-screen for scanning).
+   + Classification section: Asset System / Sub-system / Asset Type.
+   + Location section: Building / Floor / Area/Unit.
+   + Asset Details section: Model / Serial Number / Brand / Purchase Date / Status.
+3. Maintenance History section (scrollable list):
+   + Items: WO ID / Plan Name / Round / Completed Date / Technician / Status badge.
+   + Tap WO ID => navigates to WO Detail (4.4.2).
+   + Empty: "No maintenance history."
+4. Pending WOs section:
+   + Items: WO ID / Type / Status badge / Assigned Date.
+   + Tap WO ID => WO Detail (4.4.2).
+   + Empty: "No pending work orders."
+5. No Edit / Deactivate buttons shown. All sections read-only.
+6. BM taps QR Code => full-screen zoom. Tap to dismiss.
+
+Edge cases:
+- Asset has 50+ WOs in history => history section is paginated with "Load more" at bottom.
+- Detail fails to load => error: "Failed to load asset details. Please go back and try again."
+- Offline: shows cached detail if available. Banner: "Showing cached data."
+
+################ ID 4.2.3 | (cont) > View Asset Tags on Drawing (Read-only) ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Drawing viewer on mobile - read-only.
+- Tap pin => asset info popup.
+- CONFIRMED from Milestone Plan: BM Mobile has read-only drawing access.
+--- FIELDS/COMPONENTS ---
+Screen: Drawing Viewer (BM Mobile)
+- Building selector
+- PDF viewer (pdfjs-dist) + read-only tag pins
+- Tag popup: Asset Name / Code / Type / System / Status / Last Maintenance / Link to Asset Detail
+- Pan + zoom via touch
+--- USER FLOW ---
+Screen: View Asset Tags on Drawing (Building Manager Mobile - Read-only)
+
+Preconditions:
+- BM authenticated. Building within BM's scope. Drawing must exist. Read-only (cannot place/edit/delete tags on mobile).
+
+1. BM navigates to Assets => Drawing (or Drawing tab within Assets).
+2. BM selects Building from picker (BM's assigned buildings only).
+3. System loads drawing:
+   + If no drawing => "No drawing uploaded for this building. Upload via the web portal."
+   + If drawing exists => PDF renders in viewer.
+4. BM interacts with drawing:
+   + Pinch to zoom in/out.
+   + Drag to pan.
+   + Tag pins rendered at saved coordinates.
+5. BM taps a tag pin => popup slides up (bottom sheet or overlay):
+   + Asset Name / Asset Code / Asset Type / Asset System / Status badge / Last Maintenance Date.
+   + [View Asset Detail] button => navigates to Asset Detail (4.2.2).
+   + [X] or drag down to dismiss popup.
+6. No [Edit Tags] button shown. Read-only only.
+
+Edge cases:
+- Large PDF (50MB) => loads progressively; first page shown quickly; subsequent pages load on scroll.
+- Many pins in dense area => zoom in to tap individual pins.
+- Drawing fails to load => error: "Failed to load drawing. Please try again."
+- Tag pin for Inactive asset => popup shows with Inactive badge; [View Asset Detail] still works.
+
+################ ID 4.2.4 | (cont) > View Spare Part List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile. Read-only - no create, edit, or deactivate on mobile.
+- Scoped to BM's assigned buildings only.
+- Shows spare part list with stock levels for monitoring.
+--- FIELDS/COMPONENTS ---
+Screen: Spare Part List (Building Manager Mobile - Read-only)
+
+- Search bar - Placeholder: "Search by name or code"
+- Filter icon:
+  + Status - Dropdown - All / Active / Inactive
+- Spare Part list - Scrollable:
+  + Each item: Code / Name / Asset System / Available Stock / Total Stock / Status badge
+  + Tap item => read-only detail view
+- Pull-to-refresh
+- Empty state: "No spare parts found."
+- Load more on scroll
+--- USER FLOW ---
+Screen: Spare Part List (Building Manager Mobile - Read-only)
+
+Preconditions:
+- BM authenticated. List scoped to BM's assigned buildings. Read-only (no create/edit/deactivate on mobile).
+
+1. BM navigates to Inventories in bottom navigation.
+2. System loads spare parts scoped to BM's assigned buildings.
+3. List items: Code / Name / Asset System / Available Stock (highlighted) / Total Stock / Status badge.
+4. BM searches by name or code => real-time filter.
+5. BM taps filter => Status filter (All / Active / Inactive).
+6. BM taps a spare part => read-only Spare Part Detail:
+   + All sections from web in mobile-optimized layout.
+   + Stock counters prominently displayed: Total / Available / On-Hold (large numbers).
+   + Stock history log (last 10 entries, Load more).
+   + Read-only - no edit actions.
+7. BM pulls down => refreshes stock levels.
+8. Empty state: "No spare parts found."
+
+Read-only: no [+ Create] / Edit / Deactivate actions.
+
+Edge cases:
+- Available stock = 0 => highlighted in red to draw BM's attention.
+- Network unavailable => cached list shown with banner. Pull to refresh when online.
+
+################ ID 4.3 | Request Management > Request Management ################
+
+################ ID 4.3.2 | (cont) > View Request Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Scoped to BM's assigned buildings only.
+- Full request details: type, location, asset, description, attachments, history log.
+- Action buttons shown at bottom based on request type and current status.
+- All status-transition actions available on mobile (same as web 3.3.2).
+--- FIELDS/COMPONENTS ---
+Screen: Request Detail (Building Manager Mobile)
+
+- Back arrow
+- Request ID - Display / Type badge / Status badge
+- Created date + Submitted by
+
+Section: Location & Asset
+- Building / Floor / Area/Unit
+- Asset System / Asset Type / Asset (if applicable)
+
+Section: Description
+- Issue description - Display (expandable if long, [Show more] toggle)
+- Attachments - Photos/files - Tap photo => full-screen viewer with swipe - Tap PDF => open
+
+Section: History log - Scrollable event entries with timestamps
+- [Show all history] => expands full timeline
+
+Action buttons - Fixed at bottom of screen (based on type and status):
+Tenant Request (status = Tenant Request):
+- [Accept] - Button - Primary - Full-width
+- [Decline] - Button - Secondary - Full-width (stacked)
+
+Ad-hoc WO (status = Pending):
+- [Approve] - Button - Primary - Full-width
+- [Reject] - Button - Secondary - Full-width (stacked)
+
+Service Request Accepted:
+- [Assign to Supervisor] - Button - Primary - Full-width
+
+Other statuses: no action buttons (read-only view).
+--- USER FLOW ---
+Screen: Request Detail (Building Manager Mobile)
+
+Preconditions:
+- Building Manager authenticated.
+- Request within BM's assigned buildings scope.
+
+1. BM taps request from notification or Request section => Request Detail screen loads.
+2. System renders all sections based on request type and current status.
+3. BM taps photo attachment => full-screen viewer with swipe between photos.
+4. BM taps [Show all history] => full history timeline expands inline.
+
+For Tenant Requests (status = Tenant Request):
+5a. [Accept] and [Decline] shown fixed at bottom.
+5b. BM taps [Accept] => Accept flow (4.3.5).
+5c. BM taps [Decline] => Decline flow (4.3.4).
+
+For Ad-hoc WO Requests (status = Pending):
+6a. [Approve] and [Reject] shown fixed at bottom.
+6b. BM taps [Approve] => Approve flow (4.3.3).
+6c. BM taps [Reject] => Reject flow (4.3.4).
+
+For Service Request Accepted (pending Supervisor review):
+7. [Assign to Supervisor] shown at bottom => Assign flow (4.3.6).
+   Informational label above button: "Forwarded to Supervisor for review. You can assign a specific Supervisor."
+
+For terminal/other statuses (Cancelled, Approval Rejected, Ad-hoc Declined):
+8. No action buttons shown. Full read-only view with history log.
+
+Edge cases:
+- Status changed by web portal while BM views on mobile => on action tap, API detects stale status => error toast: "This request has already been processed. Please refresh." => action buttons disappear, screen refreshes.
+- Large description => truncated at 3 lines with [Show more] toggle.
+- No attachments => attachment section hidden entirely.
+- Network unavailable => cached detail shown with offline banner; action buttons disabled while offline.
+
+################ ID 4.3.3 | (cont) > Approve Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Applies to Ad-hoc WO requests in Pending status.
+- Approve => status: Pending - Unassigned => MSP Supervisor notified.
+- Confirmation prompt required before approving.
+--- FIELDS/COMPONENTS ---
+Button: [Approve] - Primary - at bottom of Request Detail (status = Pending)
+
+Alert: Confirm Approve Request
+- Message: "Approve this work order? It will be available for the MSP Supervisor to assign."
+- Approve - Button - Confirm style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Approve Request (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Request in Pending status. Within BM's assigned buildings scope.
+
+1. BM views Request Detail (4.3.2) for a Pending Ad-hoc WO request.
+2. BM reviews all details and attachments.
+3. BM taps [Approve] at bottom of screen.
+4. System shows native alert:
+   + "Approve this work order? It will be available for the MSP Supervisor to assign."
+   + [Approve] (confirm) | [Cancel].
+5. BM taps [Approve]:
+   5.1. Network unavailable => error toast: "No internet connection. Please try again."
+   5.2. Status already changed (concurrent) => error toast: "This request has already been processed. Please refresh."
+   5.3. Valid:
+    + Status => Pending - Unassigned.
+    + MSP Supervisor notified via FCM push + email: "Work Order [ID] has been approved and is ready for assignment."
+    + History log updated.
+    + Success toast: "Work order approved."
+    + Action buttons disappear. Status badge updates to "Pending - Unassigned."
+6. BM taps [Cancel] => alert dismisses, no change.
+
+Edge cases:
+- Request already approved by BM on web portal before tapping approve on mobile => stale status error shown.
+- Network times out mid-request => loading spinner shown for max 15 seconds => timeout error: "Request timed out. Please try again."
+
+################ ID 4.3.4 | (cont) > Decline / Reject Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Applies to both Tenant Requests (Decline) and Ad-hoc WO Requests (Reject).
+- Decline/Rejection Reason is REQUIRED.
+- Tenant Request declined => status: Cancelled => tenant email notification sent.
+- Ad-hoc WO rejected => status: Approval Rejected => Supervisor notified.
+--- FIELDS/COMPONENTS ---
+Button: [Decline] - Secondary (for Tenant Requests) or [Reject] - Secondary (for Ad-hoc WOs) - at bottom of Request Detail
+
+Bottom sheet or popup: Confirm Decline / Reject
+- Title: "Decline Request" or "Reject Work Order"
+- Reason - Textarea - REQUIRED - Placeholder: "Enter reason..." - Max 500 characters - Keyboard opens automatically
+- Error indicator on reason field if submitted empty: "Reason is required."
+- Confirm - Button - Destructive style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Decline / Reject Request (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Request within BM's scope. Correct status for the action.
+
+1. BM views Request Detail (4.3.2).
+2. BM taps [Decline] (for Tenant Requests) or [Reject] (for Ad-hoc WOs).
+3. Bottom sheet slides up from bottom of screen:
+   + Title: "Decline Request" or "Reject Work Order"
+   + Reason - Textarea - REQUIRED - Large text input - Keyboard opens automatically.
+   + Placeholder: "Enter reason for declining / rejecting..."
+   + Character counter shown (max 500 chars).
+   + [Confirm] button (destructive style, red) | [Cancel] button.
+4. BM enters reason => taps [Confirm]:
+   4.1. Reason empty => inline error under textarea: "Reason is required." => does NOT proceed.
+   4.2. Network unavailable => error toast: "No internet connection."
+   4.3. Status already changed => error toast: "This request has already been processed. Please refresh."
+   4.4. For Tenant Request:
+    + Status => Cancelled (terminal).
+    + Email sent to Tenant: "Your service request [ID] has been declined. Reason: [reason]."
+    + Success toast: "Request declined."
+   4.5. For Ad-hoc WO:
+    + Status => Approval Rejected.
+    + Supervisor notified (FCM + email): "Work Order [ID] has been rejected. Reason: [reason]."
+    + Success toast: "Work order rejected."
+   + Action buttons disappear. Status badge updates.
+5. BM taps [Cancel] or drags bottom sheet down => dismisses, no change.
+
+Edge cases:
+- Keyboard partially covers bottom sheet => sheet scrolls up to keep textarea visible.
+- Network times out => timeout error shown; status not changed.
+
+################ ID 4.3.5 | (cont) > Accept Tenant Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Applies to Tenant Requests only (status = Tenant Request).
+- Accept => status: Service Request Accepted => MSP Supervisor notified for review before BM final approval.
+- CONFIRMED (per status table): Service Request Accepted = Tenant request accepted by BM, forwarded to MSP Supervisor for review. Supervisor reviews and may update before resubmitting to BM for final approval (Pending status). BM then approves => Pending-Unassigned => Supervisor assigns Technician.
+--- FIELDS/COMPONENTS ---
+Button: [Accept] - Primary - at bottom of Tenant Request Detail
+
+Alert: Confirm Accept
+- Message: "Accept this service request? It will be forwarded to the MSP Supervisor for review."
+- Accept - Button - Confirm style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Accept Tenant Request (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Request in Tenant Request status. Within BM's scope.
+
+1. BM views Request Detail (4.3.2) for a Tenant Request.
+2. BM reviews issue description and attachments.
+3. BM taps [Accept] at bottom of screen.
+4. Native alert: "Accept this service request? It will be forwarded to the MSP Supervisor for review."
+   + [Accept] (confirm) | [Cancel].
+5. BM taps [Accept]:
+   5.1. Network unavailable => error toast: "No internet connection."
+   5.2. Status already changed => error toast: "This request has already been processed. Please refresh."
+   5.3. Valid:
+    + Status => Service Request Accepted.
+    + MSP Supervisor(s) notified (FCM push + email): "A new tenant service request requires your review. Request ID: [ID]."
+    + Tenant email: "Your service request [ID] has been accepted and is under review."
+    + History log updated.
+    + Success toast: "Service request accepted."
+    + Action buttons update: [Assign to Supervisor] appears.
+6. BM taps [Cancel] => alert dismisses, no change.
+
+Edge cases:
+- No active Supervisors for this building => acceptance still succeeds; notification sent but may go unread. BM should follow up via web portal.
+- Tenant email fails => acceptance still recorded; email retry handled server-side.
+
+################ ID 4.3.6 | (cont) > Assign Request to MSP Supervisor ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Available when request is in Service Request Accepted status.
+- BM assigns to a specific MSP Supervisor for the relevant building.
+--- FIELDS/COMPONENTS ---
+Component: Assign to Supervisor (Building Manager Mobile)
+
+Shown on Request Detail when status = Service Request Accepted:
+- [Assign to Supervisor] - Button - Primary - full-width at bottom
+
+Bottom sheet: Select MSP Supervisor
+- Title: "Assign to MSP Supervisor"
+- Supervisor list - Scrollable:
+  + Each item: Supervisor Name / User Group / Buildings
+  + Tap to select (radio selection)
+- Search - Text field at top of list
+- Assign - Button - Primary - enabled when supervisor selected
+- Cancel - Button - Default
+--- USER FLOW ---
+Flow: Assign Request to MSP Supervisor (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. Request in Service Request Accepted status. Active Supervisors exist for BM's buildings.
+
+1. BM views Request Detail. [Assign to Supervisor] button shown.
+2. BM taps [Assign to Supervisor].
+3. Bottom sheet slides up showing Supervisor selection list:
+   + Search bar at top of list.
+   + Each item: Supervisor name / User Group / building coverage pills.
+   + Single selection (tap to select, highlighted).
+4. BM searches or scrolls to find Supervisor => taps to select.
+5. BM taps [Assign]:
+   5.1. No Supervisor selected => [Assign] button disabled (cannot tap).
+   5.2. Network unavailable => error toast: "No internet connection."
+   5.3. Valid:
+    + Supervisor assigned as reviewer.
+    + Supervisor notified (FCM push + email): "A tenant service request has been assigned to you. Request ID: [ID]."
+    + History updated.
+    + Success toast: "Request assigned to [Supervisor Name]."
+    + Bottom sheet closes. Request Detail refreshes.
+6. BM taps [Cancel] or drags sheet down => dismisses, no change.
+
+Edge cases:
+- No active Supervisors => bottom sheet shows: "No active MSP Supervisors available for your buildings." => [Assign] button disabled.
+- Supervisor list fails to load => error in sheet: "Failed to load supervisors. Please try again."
+
+################ ID 4.4 | Work Order Management > Work Order Management ################
+
+################ ID 4.4.1 | Work Order Management > View Work Order List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Scoped to BM's assigned buildings only.
+- Shows all WOs across all statuses for monitoring and action.
+- BM can Sign Off & Close or Reject Verified WOs from the list.
+--- FIELDS/COMPONENTS ---
+Screen: Work Order List (Building Manager Mobile)
+
+- Search bar - Placeholder: "Search by ID or asset name"
+- Filter icon - Opens filter panel:
+  + Building - Dropdown - BM's assigned buildings only
+  + Status - Dropdown - All / Pending / Pending-Unassigned / Assigned / Started / Completed / Verified / Closed / Cancelled
+  + WO Type - Dropdown - All / Maintenance Scheduling / Ad-hoc Work / Service Request
+  + Date Range - Date range picker
+- WO list - Scrollable:
+  + Each item: WO ID / Type badge / Asset Code / Location / Due Date (overdue indicator in red) / Status badge
+  + Tap item => WO Detail (4.4.2)
+- Pull-to-refresh
+- Empty state: "No work orders found."
+- Load more on scroll
+--- USER FLOW ---
+Screen: Work Order List (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. List scoped to BM's assigned buildings.
+
+1. BM navigates to Work Orders in bottom navigation.
+2. System loads WOs for BM's buildings (sorted by created date descending, default: all statuses, last 30 days).
+3. List items: WO ID / Type badge / Asset Code / Location / Due Date (red if overdue) / Status badge.
+4. BM taps search bar => searches by WO ID or Asset Code.
+5. BM taps filter icon => filter panel:
+   + Building (BM's buildings only) / Status / WO Type / Date Range.
+   + [Apply] / [Reset].
+6. BM taps a WO => WO Detail (4.4.2).
+7. BM pulls down => refreshes list.
+8. Infinite scroll => loads next page on reaching bottom.
+9. Overdue indicator: red Due Date + overdue label on list item.
+10. Empty state: "No work orders found for the selected filters."
+
+Edge cases:
+- BM arrives from Dashboard KPI card tap => list pre-filtered to relevant status.
+- Network unavailable => cached list shown with banner. Pull to refresh when online.
+- List fails fresh load => error with retry button.
+
+################ ID 4.4.2 | (cont) > View Work Order Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Scoped to BM's assigned buildings only.
+- Full WO detail: Overview + 5-stage progress bar + Details + Execution tabs.
+- Action buttons shown only when status = Verified:
+  + [Sign Off & Close] - to finalise.
+  + [Reject] - to send back to Supervisor with REQUIRED reason.
+- All other statuses: read-only.
+--- FIELDS/COMPONENTS ---
+Screen: Work Order Detail (Building Manager Mobile)
+
+- Back arrow
+- Title: Asset Code  Work Type label
+- WO ID + Type badge + Created date
+- 5-stage progress bar: New => Pending => In Progress => Review => Approval (active stage highlighted)
+- Current stage context label below progress bar
+
+Overview section (scrollable):
+- Start Time / End Time (overdue indicator) / Time Required / Location (Building/Floor/Area)
+- Asset Code / Asset Type / Sub-system / System
+
+Tab: Details (read-only)
+- Description / Photos (tap to view full-size) / Remark
+
+Tab: Execution (scrollable - read-only)
+- Main Technician card: Name / Phone
+- Sub Technician cards (if any)
+- Work Checklist: N of total items - expandable list showing Description filled + Photos uploaded per item
+- Part Replacement list: Source / Name / Code / Quantity
+
+Right-side info (within Execution tab or separate section):
+- Maintenance Plan reference (if applicable)
+- Tenant contact (if Service Request)
+- History log (most recent 5 entries, tap to expand all)
+
+Action buttons - Fixed at bottom (shown only when status = Verified):
+- Sign Off & Close - Button - Primary - Full-width
+- Reject - Button - Secondary - Full-width
+--- USER FLOW ---
+Screen: Work Order Detail (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. WO within BM's assigned buildings scope.
+
+1. BM taps WO from list or notification => WO Detail loads.
+2. System renders:
+   + Header: Asset Code  Work Type / WO ID / Type badge / Created date.
+   + 5-stage progress bar: New => Pending => In Progress => Review => Approval. Active stage highlighted with label.
+   + Overview (scrollable): Start Time / End Time (overdue badge) / Time Required / Building / Floor / Area / Asset Code / Asset Type / Sub-system / System.
+3. Swipeable tabs:
+   Tab: Details (read-only): Description / Photos (tap to full-screen viewer, swipe between) / Remark.
+   Tab: Execution:
+   + Main Technician card: Name / Phone (tap to call) / Level.
+   + Sub Technician cards (if any).
+   + Work Checklist: progress bar (N/total). Each item expandable => Description filled / Photos uploaded (tap to view).
+   + Part Replacement list: Source / Name / Code / Quantity.
+   + For Maintenance WOs: Plan reference (Round / Plan Name / Frequency).
+   + For Service Request WOs: Tenant contact (Name / Phone / Email).
+   + History log: last 5 entries. [Show all] => expands full timeline.
+4. Action buttons - FIXED at bottom of screen, outside scroll area:
+   + Visible ONLY when status = Verified:
+    - [Sign Off & Close] (Primary, full-width)
+    - [Reject] (Secondary, full-width) - stacked below.
+   + All other statuses: no action buttons shown.
+5. BM taps phone number in Technician card => native phone call initiated.
+
+Edge cases:
+- WO status changes concurrently while BM viewing => on action tap, stale status detected => error toast: "Work order status has changed. Please refresh."
+- Tab switching on slow connection => loading spinner shown in tab content.
+- WO Detail fails to load => error: "Failed to load work order details. Please go back and try again."
+
+################ ID 4.4.3 | (cont) > Approve Completed Work Order (Sign Off & Close) ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- BM reviews Verified WOs on mobile and can sign off to close.
+- Confirmation prompt required. Irreversible action.
+- On close: status = Closed (terminal), all parties notified.
+--- FIELDS/COMPONENTS ---
+Button: [Sign Off & Close] - Primary - Full-width at bottom of WO Detail (status = Verified)
+
+Alert: Confirm Sign Off & Close
+- Message: "Sign off and close this work order? This action cannot be undone."
+- Sign Off & Close - Button - Destructive/Confirm style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Approve Completed Work Order - Sign Off & Close (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. WO in Verified status. Within BM's assigned buildings scope.
+
+1. BM opens WO Detail (4.4.2) for a Verified WO.
+2. BM carefully reviews (scrolls through):
+   + Checklist completion status and all checklist items.
+   + Photos uploaded per checklist item (tap to full-screen).
+   + Part Replacement details.
+   + Sign-off records (MSP Technician + Building Technician + Tenant if applicable).
+3. BM taps [Sign Off & Close] fixed at bottom of screen.
+4. Native alert appears:
+   + Title: "Sign Off & Close"
+   + Message: "Sign off and close Work Order [WO ID]? This action cannot be undone."
+   + [Sign Off & Close] (confirm, destructive style) | [Cancel].
+5. BM taps [Sign Off & Close]:
+   5.1. Network unavailable => error toast: "No internet connection. Please try again."
+   5.2. Status changed concurrently => error toast: "Work order status has changed. Please refresh."
+   5.3. Valid:
+    + BM sign-off recorded with timestamp and BM name.
+    + WO status => Closed (TERMINAL STATE).
+    + No further actions possible on this WO.
+    + MSP Supervisor push notification: "Work Order [ID] has been closed by Building Manager."
+    + MSP Technician push notification: "Work Order [ID] has been closed."
+    + If Service Request WO: Tenant email sent: "Your service request [ID] has been completed and closed."
+    + History log updated.
+    + Action buttons removed from Detail screen.
+    + Success toast: "Work order closed successfully."
+6. BM taps [Cancel] => alert dismisses. WO remains in Verified.
+
+Edge cases:
+- BM signs off from mobile while same WO is being signed off from web portal simultaneously => first request wins; second gets stale status error.
+- Network times out during sign-off => timeout error shown; WO status not changed; BM can retry.
+
+################ ID 4.4.4 | (cont) > Reject Completed Work Order ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by Building Manager on mobile.
+- Rejection sends WO back to MSP Supervisor (Verification Rejected). Technician NOT notified directly.
+- Rejection Reason is REQUIRED.
+--- FIELDS/COMPONENTS ---
+Button: [Reject] - Secondary - Full-width at bottom of WO Detail (status = Verified)
+
+Bottom sheet: Reject Work Order
+- Title: "Reject Work Order"
+- Rejection Reason - Textarea - REQUIRED - Placeholder: "Enter rejection reason..." - Max 500 characters - Keyboard opens automatically
+- Error indicator if submitted empty: "Rejection reason is required."
+- Reject - Button - Destructive style
+- Cancel - Button - Default style
+--- USER FLOW ---
+Flow: Reject Completed Work Order (Building Manager Mobile)
+
+Preconditions:
+- BM authenticated. WO in Verified status. Within BM's assigned buildings scope.
+
+1. BM opens WO Detail (4.4.2) for a Verified WO.
+2. BM identifies an issue with the work or documentation.
+3. BM taps [Reject] fixed at bottom of screen.
+4. Bottom sheet slides up:
+   + Title: "Reject Work Order"
+   + Message: "Provide a reason for rejection. The MSP Supervisor will be notified."
+   + Rejection Reason - Textarea - REQUIRED - Large input - Keyboard opens automatically.
+   + Placeholder: "Describe why this work order is being rejected..."
+   + Character counter (max 500 chars).
+   + [Reject] (destructive style, red) | [Cancel].
+5. BM enters detailed reason => taps [Reject]:
+   5.1. Reason empty => inline error: "Rejection reason is required." => does NOT proceed.
+   5.2. Network unavailable => error toast: "No internet connection."
+   5.3. Status changed concurrently => error toast: "Work order status has changed. Please refresh."
+   5.4. Valid:
+    + WO status => Verification Rejected.
+    + MSP Supervisor push notification + email: "Work Order [ID] rejected by Building Manager. Reason: [reason]. Please review and resubmit."
+    + Technician NOT directly notified.
+    + History log: "Rejected by [BM Name]. Reason: [reason] at [timestamp]."
+    + Success toast: "Work order returned to Supervisor."
+    + Action buttons removed. Status badge updates.
+6. BM taps [Cancel] or drags bottom sheet down => dismisses, no change.
+
+Edge cases:
+- BM submits rejection on mobile while web portal BM session also active => only one action goes through; concurrent action detection prevents double-rejection.
+- Very long rejection reason (near 500 chars) => character counter turns red at 480 chars as warning.
+
+################ ID 4.5 | Push Notification > Push Notification ################
+
+################ ID 4.5.1 | Push Notification > Receive Push Notification ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- FCM delivery.
+- Trigger events: New Tenant Request / New Ad-hoc WO (Pending) / WO ready for sign-off (Verified) / Spare part request needs approval / Low-stock alert / Maintenance Plan submitted (Pending).
+--- FIELDS/COMPONENTS ---
+Push notification (device OS) + in-app badge
+Notification list (bell icon):
+- Each entry: icon / title / description / timestamp / read indicator
+- Tap => navigates to relevant screen
+--- USER FLOW ---
+System Process: Push Notification (Building Manager Mobile)
+
+This is a system-triggered process, not a user-initiated flow.
+
+--- Delivery mechanism ---
+
+1. System event occurs that triggers a notification for BM.
+2. Backend sends push notification payload to Firebase Cloud Messaging (FCM).
+3. FCM routes the notification to all registered BM devices for this account.
+4. Device is online => notification delivered immediately to device.
+5. Device is offline => FCM queues the notification for delivery when device comes online. FCM message delivery is best-effort; messages may expire after 28 days if device remains offline.
+
+--- Trigger events and notification content ---
+
+Events that trigger BM mobile notifications:
++ New Tenant Request received for BM's building:
+  Title: "New Service Request"
+  Body: "A tenant has submitted a service request for [Building Name]. Tap to review."
+  Action: opens Request Detail on tap.
+
++ New Ad-hoc WO Request pending BM approval (Supervisor submitted):
+  Title: "Work Order Awaiting Approval"
+  Body: "An ad-hoc work order request for [Building Name] requires your approval."
+  Action: opens Request Detail.
+
++ WO ready for BM sign-off (status = Verified):
+  Title: "Work Order Ready for Sign-off"
+  Body: "Work Order [ID] has been reviewed by the Supervisor and is ready for your final sign-off."
+  Action: opens WO Detail.
+
++ Spare part request awaiting BM approval (On-Hold or Unavailable):
+  Title: "Spare Part Request"
+  Body: "A spare part request for Work Order [ID] requires your approval."
+  Action: opens WO Detail (spare parts tab).
+
++ Low-stock alert for spare part in BM's building:
+  Title: "Low Stock Alert"
+  Body: "Spare part [Name] stock is below minimum threshold. Current stock: [N]."
+  Action: opens Spare Part Detail.
+
++ Maintenance Plan submitted by Supervisor (Pending approval):
+  Title: "Maintenance Plan Pending Approval"
+  Body: "A maintenance plan requires your approval for [Building Name]."
+  Action: opens Plan Detail.
+
+--- In-app notification handling ---
+
+6. When app is open (foreground): notification displayed as in-app banner at top of screen. Auto-dismisses after 4 seconds. Tap to navigate.
+
+7. When app is in background: OS displays notification in system tray. Tap to open app and navigate to relevant screen. Badge count increments on app icon.
+
+8. When app is closed: OS displays notification. Tap to open app (cold start) and navigate to relevant detail screen.
+
+9. BM taps notification from any state:
+   + App opens (or comes to foreground).
+   + Navigates directly to the relevant detail screen (Request Detail, WO Detail, Spare Part Detail, or Plan Detail).
+   + Notification marked as read.
+   + Badge count decrements.
+
+10. BM has unread notifications: notification bell icon in app header shows badge count.
+
+11. Notification permissions:
+    + On first app install: system requests notification permission.
+    + If BM denies => push notifications not delivered. In-app prompts user to enable in device settings.
+    + BM can manage notification settings in device Settings => App => Notifications.
+
+Edge cases:
+- FCM token expires or device registration changes (e.g., app reinstall) => system refreshes FCM token on next app open and re-registers with backend.
+- BM receives notification for a request that has already been processed by another session => tapping notification navigates to Detail screen which shows the current (already-processed) status.
+- Multiple notifications received while offline => all queued and delivered in batch when device comes online. App processes them sequentially.
+- BM logs out => FCM token unregistered => no more notifications until next login.
+================================================================
+PLATFORM SECTION: Mobile - MSP Supervisor App (Module 6)
+================================================================
+
+################ ID 6.1 | Authentication & Dashboard > Authentication & Dashboard ################
+
+################ ID 6.1.1 | Authentication & Dashboard > Login ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile (Android & iOS).
+- Account created by Super Admin or Building Manager via web portal.
+- Supervisor MUST belong to a User Group. Scope defined by User Group: buildings + asset systems.
+- On successful login => Dashboard (6.1.5) scoped to Supervisor's User Group.
+- If valid session exists => system skips Login, navigates to Dashboard.
+- Maximum 5 consecutive failed attempts before 15-minute lockout.
+- All connections use HTTPS/SSL with TLS 1.2+.
+--- FIELDS/COMPONENTS ---
+Screen: Login (MSP Supervisor Mobile)
+
+- EZAxis logo - Display - Centered top
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email" - Max 100 characters
+- Password - Text field (masked) - Required - Placeholder: "Enter your password" - Min 8 characters - Show/hide toggle
+- Forgot Password? - Hyperlink - Navigates to Forgot Password (6.1.3)
+- Login - Button - Primary - Full-width - Large tap target
+- Loading indicator while authenticating
+--- USER FLOW ---
+Screen: Login (MSP Supervisor Mobile)
+
+Preconditions:
+- No authentication required - entry point for unauthenticated MSP Supervisor on mobile.
+- Account must exist with role = MSP Supervisor AND must belong to a User Group.
+- If valid session token stored on device => system skips Login and navigates to Dashboard.
+
+1. App opens. System checks for stored session token on device:
+   1.1. Valid token => navigates to Dashboard (6.1.5) scoped to User Group => flow ends.
+   1.2. No token or expired => renders Login screen.
+
+2. Supervisor enters email and password => taps [Login].
+   + Loading spinner shown on [Login] while authenticating.
+
+3. System validates fields:
+   3.1. Email empty => inline error: "Email is required."
+   3.2. Password empty => inline error: "Password is required."
+   3.3. Email format invalid => inline error: "Please enter a valid email address."
+
+4. System checks failed attempt counter:
+   4.1. >= 5 failed attempts within 15 min => error toast: "Too many failed attempts. Please try again in 15 minutes."
+
+5. System queries backend:
+   5.1. Email not found or role != MSP Supervisor => error toast: "Invalid email or password." => increments counter.
+   5.2. Account Inactive => error toast: "Your account is not active. Please contact the administrator."
+   5.3. Account has no User Group => error toast: "Your account has no scope assigned. Please contact the administrator."
+   5.4. Password mismatch => error toast: "Invalid email or password." => increments counter.
+   5.5. All valid:
+    + Session token stored securely on device (Keychain/Keystore).
+    + Failed attempt counter reset.
+    + Last login timestamp updated.
+    + Navigates to Dashboard (6.1.5) scoped to Supervisor's User Group.
+
+Edge cases:
+- Network unavailable when tapping [Login] => error toast: "No internet connection. Please check your network and try again."
+- Token on device is expired (server-side) => system detects on first API call => redirects to Login: "Your session has expired. Please log in again."
+- Supervisor's User Group deactivated after login => session continues but API returns empty scoped data.
+- Email pasted with spaces => trimmed before validation.
+
+   5.X. Account Status = Pending (invitation not yet accepted) => does NOT create session => error: "Your account is not yet activated. Please check your email for the invitation link."
+
+################ ID 6.1.2 | (cont) > Logout ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated MSP Supervisor from any screen on mobile.
+- Accessible from Profile/More in bottom navigation.
+- Native alert confirmation before logout.
+- On logout: session token invalidated and removed from device.
+--- FIELDS/COMPONENTS ---
+Component: Logout (MSP Supervisor Mobile)
+
+Access path: Bottom navigation => Profile/More => Sign out
+
+- Sign out - Menu item
+
+Alert: Confirm Sign Out
+- Message: "Are you sure you want to sign out?"
+- Sign out - Button - Destructive
+- Cancel - Button - Default
+--- USER FLOW ---
+Flow: Logout (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated on mobile.
+
+1. Supervisor taps Profile or More icon in bottom navigation.
+2. Profile/Settings screen opens. Supervisor taps [Sign out].
+3. Native OS alert:
+   + Title: "Sign Out"
+   + Message: "Are you sure you want to sign out?"
+   + [Sign out] (destructive) | [Cancel].
+4a. Supervisor taps [Sign out]:
+   + Session token invalidated server-side.
+   + Token removed from device secure storage.
+   + Any cached data cleared from app local storage.
+   + FCM push token unregistered (no more notifications until next login).
+   + App navigates to Login screen (6.1.1).
+4b. Supervisor taps [Cancel]:
+   + Alert dismisses. Supervisor remains authenticated.
+
+Edge cases:
+- Network unavailable during logout => local token removed and app navigates to Login. Server-side invalidation retried when online or expires naturally.
+- App force-closed and reopened => session token re-checked on app open (step 1).
+- Session expires while app in background => on next foreground API call, 401 detected => clears local token => navigates to Login: "Your session has expired."
+
+################ ID 6.1.3 | (cont) > Forgot Password ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by unauthenticated MSP Supervisors from Login screen on mobile.
+- Same 2-screen OTP-based flow as web (5.1.3).
+- OTP sent to registered email via AWS SES/SendGrid.
+- OTP validity: 10 minutes (assumed - flagged for BA review).
+- After reset => navigates to Login (6.1.1).
+--- FIELDS/COMPONENTS ---
+Screen 1 - Enter Email (Mobile)
+
+- Page title: "Forgot Password"
+- Instruction text: "Enter your registered email address. We will send you a verification code."
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email"
+- Continue - Button - Primary - Full-width
+- Back to Login - Hyperlink
+
+Screen 2 - Enter OTP and New Password (Mobile)
+
+- Page title: "Reset Password"
+- Instruction text: "Enter the verification code sent to [email]."
+- OTP Code - Text field - Required - Keyboard type: numeric - 6 digits
+- Resend Code - Hyperlink - Active after 60 seconds - Shows countdown
+- New Password - Text field (masked) - Required - Min 8 characters - Show/hide toggle
+- Confirm New Password - Text field (masked) - Required - Must match
+- Reset Password - Button - Primary - Full-width
+- Back to Login - Hyperlink
+--- USER FLOW ---
+Screen: Forgot Password (MSP Supervisor Mobile)
+
+Preconditions:
+- No authentication required. Must have an active MSP Supervisor account.
+
+Screen 1 - Enter Email:
+1. Supervisor taps [Forgot Password?] on Login => Screen 1.
+2. Enters email (keyboard type: email) => taps [Continue]:
+   2.1. Empty => error: "Email is required."
+   2.2. Format invalid => error: "Please enter a valid email address."
+   2.3. Not found in MSP Supervisor accounts => error: "No account found with this email address."
+   2.4. Account Inactive => error: "Your account is not active. Please contact the administrator."
+   2.5. Network unavailable => error: "No internet connection."
+   2.6. Valid => OTP sent via AWS SES/SendGrid => navigates to Screen 2.
+3. Taps [Back to Login] => navigates to Login (6.1.1).
+
+Screen 2 - Enter OTP & New Password:
+4. Supervisor enters OTP (numeric keyboard, 6 digits) / New Password / Confirm.
+5. Taps [Reset Password]:
+   5.1. OTP empty => error: "Please enter the verification code."
+   5.2. Wrong format => error: "Verification code must be 6 digits."
+   5.3. OTP incorrect => error: "Invalid verification code." After 5 wrong attempts => OTP invalidated => restart from Screen 1.
+   5.4. OTP expired => error: "This code has expired. Please request a new one." => returns to Screen 1.
+   5.5. Password < 8 chars => error: "Password must be at least 8 characters."
+   5.6. Confirm mismatch => error: "Passwords do not match."
+   5.7. Network unavailable => error: "No internet connection."
+   5.8. All valid:
+    + Password updated. All active sessions invalidated.
+    + Navigates to Login (6.1.1).
+    + Success toast: "Password reset successfully. Please log in with your new password."
+6. [Resend Code] (active after 60s with countdown timer): new OTP sent => previous invalidated.
+
+Edge cases:
+- Email delivery fails => "Failed to send verification code. Please try again later."
+- App closed mid-reset => returns to Login screen (Screen 2 state not persisted).
+
+################ ID 6.1.4 | (cont) > Multi-Language Switch ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated MSP Supervisors from any screen on mobile.
+- Supports English (EN) and Vietnamese (VI).
+- Language switch applies immediately without app restart.
+- Selected language persisted per user account across sessions.
+--- FIELDS/COMPONENTS ---
+Component: Language Switcher (MSP Supervisor Mobile)
+
+Access path: Profile / Settings => Language
+
+- Language - Selection list or toggle
+- Options: English (EN) | Ti?ng Vi?t (VI)
+- Currently selected language highlighted
+- Tap to switch - applies immediately
+--- USER FLOW ---
+Flow: Multi-Language Switch (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated. Language accessible from Profile/Settings.
+
+1. Supervisor navigates to Profile => Settings => Language.
+2. Selection list shows EN (English) | VI (Ti?ng Vi?t). Current language highlighted.
+3. Supervisor taps alternate language:
+   3.1. App immediately re-renders all UI text without restart.
+   3.2. Data content (asset names, descriptions) NOT translated.
+   3.3. Preference saved to account via API.
+   3.4. Save succeeds => persists across all sessions and devices (web portal also reflects).
+   3.5. Save fails => UI still shows new language this session => toast: "Failed to save language preference. The change will apply to this session only."
+4. Taps same language => no action.
+
+Edge cases:
+- Language switched while offline => UI changes locally; server sync fails; reverts on next login.
+- Language switch while form is open => field values preserved; labels/placeholders update.
+
+################ ID 6.1.5 | (cont) > Dashboard ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Simplified dashboard - KPI cards only.
+- Scoped to Supervisor's User Group.
+- CONFIRMED MOBILE SCOPE: Status-transition actions on mobile. Create/Edit/Deactivate records = web-only.
+--- FIELDS/COMPONENTS ---
+Screen: Dashboard (Supervisor Mobile)
+- Building selector - Supervisor's buildings
+- KPI cards: Pending Tech Requests / Awaiting Assignment / In Execution / Awaiting Sign-off
+- Recent Activity list - Latest 5 WO updates
+- Bottom nav: Home / Work Orders / Assets / More
+--- USER FLOW ---
+Screen: Dashboard (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated. Default landing screen. Scoped to User Group.
+
+1. App opens to Dashboard. System loads with first building in User Group scope and last 30 days.
+
+2. System fetches and renders:
+   2.1. KPI cards (large tap targets, Supervisor-relevant):
+    + Pending Assignment: WOs in Pending - Unassigned status (requires immediate action).
+    + In Progress: WOs in Assigned + Started.
+    + Pending Review: WOs in Completed status awaiting Supervisor sign-off.
+    + Technician Requests: ad-hoc requests from Technicians awaiting Supervisor review.
+    + Closed this period: WOs reaching Closed status.
+   2.2. Team Activity: quick view of active Technicians and their current WO status.
+   2.3. Recent Activity list: latest 5-10 events (WO assignments, completions, rejections).
+
+3. Supervisor taps Building selector (picker, restricted to User Group buildings):
+   + KPI cards re-fetch scoped to selected building.
+
+4. Supervisor taps a KPI card:
+   + "Pending Assignment" => WO List filtered to Pending - Unassigned (6.2.2).
+   + "Pending Review" => WO List filtered to Completed (6.2.2).
+   + "Technician Requests" => WO List filtered to Technician Request status (6.2.2).
+
+5. Supervisor taps a Recent Activity item => navigates to relevant WO or Request Detail (6.2.3).
+
+6. Supervisor pulls down => refreshes all data.
+
+Edge cases:
+- User Group has no Technicians => Team Activity shows: "No Technicians in your group."
+- No User Group => "No scope assigned. Please contact the administrator."
+- Section fails to load => "Failed to load. Tap to retry."
+- Offline => cached data shown with banner: "Showing cached data. Pull to refresh when online."
+
+################ ID 6.2 | Work Order & Request Management > Work Order & Request Management ################
+
+################ ID 6.2.1 | Work Order & Request Management > Create Ad-hoc Work Order ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Available on mobile for MSP Supervisor (confirmed exception for field operations).
+- Supervisor creates ad-hoc WO on-site when issue is discovered in the field.
+- Flow: Create => status: Pending => BM notified for approval.
+- On BM approval => status: Pending - Unassigned => Supervisor assigns Technician.
+- All dropdowns restricted to Supervisor's User Group scope.
+--- FIELDS/COMPONENTS ---
+Screen: Create Ad-hoc Work Order (MSP Supervisor Mobile)
+
+- Page title: "New Ad-hoc Work Order"
+- Back arrow
+
+Section: Asset & Location
+- Asset System - Dropdown - Required - Supervisor's group systems only
+- Asset Sub-system - Dropdown - Optional - Cascades from System
+- Asset Type - Dropdown - Optional - Cascades from Sub-system
+- Asset - Dropdown - Optional - Searchable - or [Scan QR] icon to auto-fill
+- Building - Dropdown - Required - Supervisor's group buildings only
+- Floor - Dropdown - Optional - Cascades from Building
+- Area/Unit - Dropdown - Optional - Cascades from Floor
+
+Section: Work Details
+- Description - Textarea - Required - Max 1000 characters - Keyboard opens automatically
+- Duration of Work - Text field - Optional - e.g., "2 hours"
+- Priority - Dropdown - Optional - Low / Medium / High / Urgent
+- Attachments - File input - Optional - Camera or gallery - JPG/PNG/PDF
+
+- Cancel - Button - Secondary - Full-width
+- Submit - Button - Primary - Full-width
+--- USER FLOW ---
+Flow: Create Ad-hoc Work Order (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- User Group must have at least 1 building and 1 asset system.
+- Use case: Supervisor is on-site and discovers an issue requiring a WO.
+
+1. Supervisor taps [+ New WO] / [Create Ad-hoc WO] in bottom navigation or WO list.
+2. Create Ad-hoc WO screen loads.
+
+3. Supervisor fills required fields:
+   - Asset System (required, dropdown restricted to User Group systems).
+   - Asset Sub-system (optional, cascades from System).
+   - Asset Type (optional, cascades from Sub-system).
+   - Asset (optional, searchable or [Scan QR] to auto-fill):
+     + Supervisor taps [Scan QR] icon next to Asset field.
+     + Camera opens. Supervisor points at asset QR code.
+     + System scans QR => Asset, Building, Floor, Area auto-filled from asset record.
+     + If asset not in Supervisor's scope => error toast: "This asset is outside your scope."
+   - Building (required, restricted to User Group buildings  or auto-filled from QR scan).
+   - Floor (optional, cascades from Building).
+   - Area/Unit (optional, cascades from Floor).
+   - Description (required, textarea, max 1000 chars, keyboard opens automatically).
+   - Duration of Work (optional).
+   - Priority (optional: Low / Medium / High / Urgent).
+   - Attachments (optional, JPG/PNG/PDF, max 5MB each, max 5 files  camera or gallery).
+
+4. Supervisor taps [Submit]:
+   4.1. Asset System not selected => error: "Asset System is required."
+   4.2. Building not selected => error: "Building is required."
+   4.3. Description empty => error: "Description is required."
+   4.4. Description > 1000 chars => error: "Description must not exceed 1000 characters."
+   4.5. Attachment invalid type => error: "Only JPG, PNG, and PDF files are accepted."
+   4.6. Attachment > 5MB => error: "Each file must not exceed 5 MB."
+   4.7. Network unavailable => error: "No internet connection. Please try again."
+   4.8. All valid:
+    + WO created with Status: Pending.
+    + BM notified (FCM push + email): "A new ad-hoc work order from Supervisor [Name] requires your approval."
+    + Success toast: "Work order submitted for Building Manager approval."
+    + Navigates back to WO list.
+5. Supervisor taps [Cancel] => navigates back without saving.
+
+Edge cases:
+- Camera permission not granted for QR scan => system shows OS permission request. If denied => error: "Camera permission required. Enable in device settings."
+- QR scan fails (poor lighting, damaged QR) => toast: "Unable to scan QR code. Please select the asset manually."
+- Network error => "Failed to create work order. Please try again." => no partial record.
+
+################ ID 6.2.2 | (cont) > View Request & Work Order List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Same scope as web (5.3.2).
+- Mobile-optimised scrollable list.
+
+WO Status reference (per product document):
+Group: Preparation => Draft
+Group: New => Technician Request / Tenant Request / Service Request Accepted / Pending
+Group: Pending => Unassigned (WO approved, ready for Technician assignment)
+Group: In Progress => Assigned / Started
+Group: Review => Completed (Supervisor reviews and signs off before forwarding to BM)
+Group: Approval => Verified (BM reviews, signs, and approves to close)
+Group: Finalized => Closed / Cancelled
+Group: Rejection => Ad-hoc Declined / Approval Rejected / Completion Rejected / Verification Rejected
+--- FIELDS/COMPONENTS ---
+Screen: Work Orders List (Mobile)
+- Search + Filter: Status / Type
+- WO List: ID / Type badge / Asset / Location / Due Date (overdue indicator) / Status
+- Pull-to-refresh
+- Empty state: No work orders found.
+--- USER FLOW ---
+Screen: Request & Work Order List (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated. Scoped to User Group.
+
+1. Supervisor navigates to Work Orders in bottom navigation.
+2. System loads all WOs and requests within scope (default: all statuses, last 30 days).
+3. List items: WO ID / Type badge / Status badge / Building / Asset Code / Due Date (red if overdue) / Assigned Technician name.
+4. Supervisor taps search bar => searches by WO ID or asset code.
+5. Supervisor taps filter icon => filter panel slides up:
+   + Building (User Group buildings only) / Status / WO Type / Assigned Technician / Date Range.
+   + [Apply] => list updates. [Reset] => clears filters.
+6. Supervisor taps a WO/request item => WO Detail (6.2.3).
+7. Supervisor pulls down => refreshes list.
+8. Infinite scroll => loads next page.
+9. Overdue items: red Due Date + overdue badge on list item.
+10. Empty state: "No work orders found for the selected filters."
+
+Edge cases:
+- Supervisor arrives from Dashboard KPI card tap => list pre-filtered to relevant status.
+- Network unavailable => cached list with banner: "Showing cached data."
+- Filters persist within the session (not reset on navigate away and return).
+
+################ ID 6.2.3 | (cont) > View Work Order Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile.
+- Full WO detail: Overview + 5-stage progress bar + Details + Execution tabs.
+- Action buttons fixed at bottom based on WO status.
+- Verification Rejected banner at top when status = Verification Rejected.
+- Scoped to Supervisor's User Group (buildings AND asset systems).
+--- FIELDS/COMPONENTS ---
+Screen: Work Order Detail (MSP Supervisor Mobile)
+
+See 6.2.3 - same UI structure as described in 5.3.3 but mobile-optimized:
+- Swipeable tabs (Details / Execution)
+- Pinch-zoom photos
+- Tap phone number => native call
+- Verification Rejected red banner at top
+- Action buttons fixed at bottom per status
+
+Status-based action buttons:
+- Pending-Unassigned: [Assign to Technician] - Primary - Full-width
+- Technician Request: [Approve & Forward to BM] Primary | [Decline] Secondary - stacked
+- Completed: [Sign Off & Forward to BM] Primary | [Reject] Secondary - stacked
+- Verification Rejected: [Review & Resubmit to BM] - Primary - Full-width
+- Other: no buttons (read-only)
+--- USER FLOW ---
+Screen: Work Order Detail (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated. WO within User Group scope.
+
+1. Supervisor taps WO from list => WO Detail loads. Swipes between tabs.
+2. Taps photos => full-screen viewer. Taps phone => native call.
+
+When status = Pending - Unassigned:
+3. Taps [Assign to Technician] => Assign flow (6.2.5).
+
+When status = Technician Request:
+4a. Taps [Approve & Forward to BM] => native alert => Approve flow (6.2.4).
+4b. Taps [Decline] => bottom sheet with REQUIRED reason => Decline flow (6.2.4).
+
+When status = Completed:
+5a. Reviews checklist, photos, parts, sign-off records.
+5b. Taps [Sign Off & Forward to BM] => Sign Off flow (6.2.7).
+5c. Taps [Reject] => bottom sheet with REQUIRED reason => Reject flow (6.2.7).
+
+When status = Verification Rejected:
+6. Red banner shows BM rejection reason.
+   CONFIRMED: Supervisor cannot edit execution content. Only add optional note.
+7. Taps [Review & Resubmit to BM] => Resubmit flow (6.2.7).
+
+All other statuses: read-only.
+
+Edge cases:
+- Concurrent status change => stale status error toast.
+- WO Detail fails => 'Failed to load. Please go back and try again.'
+- Offline => cached detail with banner; action buttons disabled.
+
+################ ID 6.2.4 | (cont) > Review & Approve/Decline Technician Ad-hoc Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile.
+- Reviews ad-hoc requests submitted by Technicians (status: Technician Request).
+- Approve => forward to BM (status: Pending) => BM notified.
+- Decline => status: Ad-hoc Declined => Technician notified.
+- Decline Reason: REQUIRED.
+--- FIELDS/COMPONENTS ---
+Screen: Technician Request Detail (within WO Detail 6.2.3)
+
+Action buttons at bottom when status = Technician Request:
+- [Approve & Forward to BM] - Button - Primary - Full-width
+- [Decline] - Button - Secondary - Full-width (stacked below)
+
+Alert: Confirm Approve
+- Message: "Forward this request to Building Manager for approval?"
+- Approve - Confirm style | Cancel
+
+Bottom sheet: Confirm Decline
+- Title: "Decline Request"
+- Decline Reason - Textarea - REQUIRED - Max 500 characters - Keyboard opens automatically
+- Error if submitted empty: "Decline reason is required."
+- Decline - Destructive (red) | Cancel
+--- USER FLOW ---
+Flow: Review & Approve / Decline Technician Ad-hoc Request (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- Request in Technician Request status and within Supervisor's User Group scope.
+
+1. Supervisor opens WO Detail (6.2.3) for a Technician Request.
+2. Reviews all details, description, attachments (tap photos to full-screen).
+
+--- Approve ---
+3. Supervisor taps [Approve & Forward to BM].
+4. Native alert: "Forward this request to Building Manager for approval?"
+   [Approve] | [Cancel].
+5. Supervisor taps [Approve]:
+   5.1. Network unavailable => error toast: "No internet connection."
+   5.2. Status already changed => error toast: "This request has already been processed. Please refresh."
+   5.3. Valid:
+    + Status => Pending.
+    + BM notified (FCM push + email): "A new ad-hoc work order request requires your approval."
+    + History log updated.
+    + Success toast: "Request forwarded to Building Manager."
+    + Action buttons disappear. Status badge updates.
+6. Taps [Cancel] => alert dismisses, no change.
+
+--- Decline ---
+7. Supervisor taps [Decline].
+8. Bottom sheet slides up:
+   + Title: "Decline Request"
+   + Decline Reason - Textarea - REQUIRED - Keyboard opens automatically.
+   + Placeholder: "Enter reason for declining..."
+   + Character counter (max 500 chars).
+   + [Decline] (destructive, red) | [Cancel].
+9. Supervisor enters reason => taps [Decline]:
+   9.1. Reason empty => inline error: "Decline reason is required."
+   9.2. Network unavailable => error toast: "No internet connection."
+   9.3. Valid:
+    + Status => Ad-hoc Declined.
+    + Technician notified (FCM push + email): "Your ad-hoc request has been declined. Reason: [reason]. Please edit and resubmit if needed."
+    + Success toast: "Request declined."
+    + Bottom sheet closes. Status updates.
+10. Taps [Cancel] or drags bottom sheet down => dismisses, no change.
+
+Edge cases:
+- Keyboard partially covers bottom sheet => sheet scrolls up to keep textarea visible.
+- Network times out => timeout error after 15 seconds; no status change.
+
+################ ID 6.2.5 | (cont) > Assign Work Order to Technician ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile.
+- Assigns a Technician to a WO in Pending - Unassigned status.
+- Main Technician required. Sub Technicians optional, added separately.
+- On assignment => status: Assigned => Technician receives push notification.
+- CONFIRMED: Due Date set manually by Supervisor at assignment time.
+--- FIELDS/COMPONENTS ---
+Component: Assignment Bottom Sheet (MSP Supervisor Mobile)
+
+Triggered by tapping [Assign to Technician] on WO Detail (status = Pending - Unassigned).
+
+Main Technician - Required:
+- Search bar - Text field - at top of list
+- Technician list - Scrollable - Active Technicians in Supervisor's User Group
+  + Each item: Avatar / Name / Level / active WO count (workload indicator)
+  + Tap to select (single selection, checkmark shown)
+
+Sub Technicians - Optional:
+- [+ Add Sub Technician] - Button - Secondary - Opens multi-select picker
+- Selected sub-techs shown as removable chips
+
+Due Date - Date picker - Optional - Format: dd/mm/yyyy - CONFIRMED: manually set by Supervisor
+
+Notes - Textarea - Optional - Max 500 characters
+
+- Cancel - Button - Default
+- Assign - Button - Primary - Enabled only when Main Technician selected
+--- USER FLOW ---
+Flow: Assign Work Order to Technician (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- WO must be in Pending - Unassigned status and within Supervisor's User Group scope.
+- At least 1 active Technician must exist in User Group.
+
+1. Supervisor taps [Assign to Technician] on WO Detail (full-width button at bottom).
+2. Assignment bottom sheet slides up from bottom of screen.
+
+3. Supervisor searches or scrolls to find Technician.
+   + Workload indicator shows active WO count per Technician to help distribute evenly.
+4. Supervisor taps a Technician to select as Main Technician (checkmark shown).
+5. Optionally taps [+ Add Sub Technician] => multi-select picker opens => selects additional Technicians.
+6. Optionally sets Due Date via date picker (manually set - no auto-calculation).
+7. Optionally adds Notes.
+
+8. Supervisor taps [Assign]:
+   8.1. No Main Technician selected => [Assign] button is disabled; cannot tap.
+   8.2. Network unavailable => error toast: "No internet connection."
+   8.3. Status changed concurrently => error toast: "This work order has already been updated. Please refresh."
+   8.4. Selected Technician became inactive => error toast: "Selected Technician is no longer active. Please choose another."
+   8.5. All valid:
+    + WO status => Assigned.
+    + Main Technician push notification: "You have been assigned Work Order [ID]. Please review and start when ready."
+    + Sub Technician(s) notified: "You have been added to Work Order [ID] as a Sub Technician."
+    + History log updated.
+    + Success toast: "Work order assigned to [Technician Name]."
+    + Bottom sheet closes. WO Detail refreshes with new status and assigned Technician shown.
+
+9. Supervisor taps [Cancel] or drags sheet down => dismisses, no change.
+
+Adding Sub Technicians after initial assignment (Assigned or Started status):
+10. From WO Detail => [+ Add Sub Technician]:
+    + Same bottom sheet (excludes already-assigned Technicians).
+    + Selected Sub Technician added immediately.
+    + Push notification sent to newly added Sub Technician.
+
+Edge cases:
+- No active Technicians in group => bottom sheet shows: "No active Technicians available in your group."
+- Technician list fails to load => error in sheet: "Failed to load technicians. Please try again."
+- Network times out during assignment => timeout error after 15 seconds; WO remains Pending - Unassigned.
+
+################ ID 6.2.6 | (cont) > Spare Parts Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile.
+- Supervisor pre-requests spare parts for a WO before Technician starts.
+- Submitted to BM for approval.
+- On BM approval => On-Hold set => stock-out triggered automatically.
+- Embedded in WO Detail screen.
+--- FIELDS/COMPONENTS ---
+Component: Spare Parts Request (embedded in WO Detail - MSP Supervisor Mobile)
+
+Accessible via [Request Spare Parts] button on WO Detail:
+
+Bottom sheet: Request Spare Parts
+- Title: "Request Spare Parts"
+
+Part entry (repeatable):
+- Spare Part - Dropdown - Required - Searchable - Supervisor's scope spare parts
+  + Shows: Part Name / Code / Available Stock
+- Quantity - Number - Required - Keyboard type: numeric - Min: 1
+- [+ Add another part] - Secondary - adds another entry
+
+- Notes - Textarea - Optional - Max 500 characters
+
+- Cancel - Button - Default
+- Submit Request - Button - Primary
+--- USER FLOW ---
+Flow: Spare Parts Request (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated. WO within Supervisor's User Group scope.
+
+1. Supervisor opens WO Detail (6.2.3).
+2. In Execution tab, Supervisor taps [Request Spare Parts].
+3. Bottom sheet slides up: "Request Spare Parts"
+
+   Part entry (repeatable via [+ Add another part]):
+   + Spare Part: searchable dropdown (parts scoped to User Group, Active only).
+     Shows: Name / Code / Available Stock / On-Hold.
+   + Quantity: numeric keyboard input, min 1.
+
+   Notes: textarea (optional).
+
+4. Supervisor taps [Submit Request]:
+   4.1. Any Spare Part not selected => error: "Please select a spare part."
+   4.2. Any Quantity < 1 or empty => error: "Please enter a valid quantity."
+   4.3. Requested quantity > Available stock => warning toast (not blocked): "Requested quantity exceeds available stock. This will be flagged as Unavailable." Supervisor can confirm or adjust.
+   4.4. Duplicate part entries => warning: "Duplicate part detected. Please combine into one entry."
+   4.5. Network unavailable => error toast: "No internet connection."
+   4.6. All valid:
+    + For each part: If stock sufficient => On-Hold set. If insufficient => flagged Unavailable.
+    + BM notified (FCM push + email): "Spare part request for Work Order [ID] requires your approval."
+    + History log updated.
+    + Success toast: "Spare parts request submitted for Building Manager approval."
+    + Bottom sheet closes.
+5. Supervisor taps [Cancel] or drags sheet down => dismisses, no request created.
+
+Edge cases:
+- Spare Part dropdown empty (none in scope) => "No spare parts available for your scope."
+- Network times out => timeout error; no request created.
+
+################ ID 6.2.7 | (cont) > Work Order Completion Review & Sign-off ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile.
+- Reviews Completed WOs submitted by Technicians.
+- Sign Off => status: Verified => BM notified.
+- Reject => status: Completion Rejected => Technician notified => Rejection Reason REQUIRED.
+- Verification Rejected WOs can be resubmitted to BM from this same screen.
+--- FIELDS/COMPONENTS ---
+Screen: WO Completion Review (MSP Supervisor Mobile)
+
+Action buttons fixed at bottom:
+- status = Completed:
+  + [Sign Off & Forward to BM] - Button - Primary - Full-width
+  + [Reject] - Button - Secondary - Full-width
+- status = Verification Rejected:
+  + [Review & Resubmit to BM] - Button - Primary - Full-width
+
+Execution Summary (read-only - scrollable):
+- Checklist: N of total items completed
+  + Each item expandable: Description filled / Photos uploaded (tap to full-screen)
+- Part Replacement list: Source / Name / Code / Quantity
+- Sign-off records: MSP Technician / Building Technician / Tenant (if applicable)
+  + Name + timestamp per sign-off
+- Maintenance Plan reference (if applicable)
+- History log
+
+If Verification Rejected - banner at top (read-only):
+- "Rejected by [BM Name] on [date]. Reason: [rejection reason]"
+
+Alert: Confirm Sign Off
+- Message: "Sign off and forward to Building Manager for final review?"
+- Sign Off - Confirm | Cancel
+
+Bottom sheet: Reject Work Order
+- Title: "Reject Work Order"
+- Rejection Reason - Textarea - REQUIRED - Max 500 characters
+- Error if empty: "Rejection reason is required."
+- Reject - Destructive | Cancel
+
+Alert: Confirm Resubmit
+- Message: "Resubmit this work order to Building Manager?"
+- Resubmit - Confirm | Cancel
+--- USER FLOW ---
+Flow: WO Completion Review & Sign-off (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- WO in Completed or Verification Rejected status.
+- WO within Supervisor's User Group scope.
+
+--- When status = Completed ---
+
+1. Supervisor opens WO Detail (6.2.3). Execution tab shows full checklist and sign-off records.
+2. Supervisor systematically reviews by scrolling through Execution tab:
+   + Checklist items: each item expandable. Checks Description is filled + Photos uploaded.
+   + Part Replacement list: verifies parts used.
+   + Sign-off records: MSP Technician A / Building Technician / Tenant (if applicable). Timestamps shown.
+
+3. Supervisor taps [Sign Off & Forward to BM] at bottom:
+   3.1. Native alert: "Sign off and forward to Building Manager? Verify all checklist items, photos, and signatures are complete."
+    + [Sign Off] (confirm) | [Cancel].
+   3.2. Supervisor taps [Sign Off]:
+    + Network unavailable => error toast: "No internet connection."
+    + Status changed concurrently => error toast: "Work order status has changed. Please refresh."
+    + Valid:
+     - Supervisor sign-off recorded with timestamp.
+     - Status => Verified.
+     - BM push notification + email: "Work Order [ID] has been reviewed and is ready for your final sign-off."
+     - History log updated.
+     - Success toast: "Work order forwarded to Building Manager."
+     - Action buttons removed from screen.
+   3.3. Supervisor taps [Cancel] => alert dismisses.
+
+4. Supervisor taps [Reject] at bottom:
+   4.1. Bottom sheet slides up:
+    + Title: "Reject Work Order"
+    + Rejection Reason - Textarea - REQUIRED - Keyboard opens automatically.
+    + Placeholder: "Describe what needs to be corrected..."
+    + Character counter (max 500 chars).
+    + [Reject] (destructive) | [Cancel].
+   4.2. Supervisor enters specific reason => taps [Reject]:
+    + Reason empty => inline error: "Rejection reason is required."
+    + Network unavailable => error toast: "No internet connection."
+    + Valid:
+     - Status => Completion Rejected.
+     - Technician push notification + email: "Work Order [ID] rejected. Reason: [reason]. Please correct and resubmit."
+     - History updated.
+     - Success toast: "Work order returned to Technician."
+     - Action buttons removed.
+   4.3. Taps [Cancel] or drags sheet down => dismisses.
+
+--- When status = Verification Rejected ---
+
+5. Supervisor sees red banner at top: "Rejected by [BM Name] on [date]. Reason: [reason]."
+6. Supervisor reviews BM's feedback.
+7. CONFIRMED: Supervisor CANNOT edit execution content after Verification Rejected. Supervisor can only add an optional note before resubmitting as-is.
+   Supervisor taps [Review & Resubmit to BM]:
+   7.1. Native alert: "Confirm that you have addressed the rejection reason and the work order is ready for resubmission."
+    + [Resubmit] | [Cancel].
+   7.2. Supervisor confirms:
+    + Status => Verified (again  re-enters Approval group for BM to review).
+    + BM push notification + email: "Work Order [ID] has been resubmitted for your review."
+    + Success toast: "Work order resubmitted to Building Manager."
+   7.3. Taps [Cancel] => alert dismisses.
+
+Edge cases:
+- Keyboard partially covers bottom sheet for Reject reason => sheet scrolls up to keep textarea visible.
+- Network timeout on sign-off => WO remains in Completed. Supervisor can retry.
+- BM rejects again after resubmission => WO returns to Verification Rejected. Supervisor can resubmit again. Each cycle adds history entry.
+
+################ ID 6.3 | Asset & Inventory (Read-only) > Asset & Inventory (Read-only) ################
+
+################ ID 6.3.1 | Asset & Inventory (Read-only) > View Asset List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile. Read-only.
+- Scoped to User Group: Building AND Asset System must both match.
+- No create, edit, or deactivate on mobile.
+- [Scan QR] shortcut to jump directly to Asset Detail.
+--- FIELDS/COMPONENTS ---
+Screen: Asset List (MSP Supervisor Mobile - Read-only)
+
+- Search bar - Placeholder: 'Search by name or code'
+- [Scan QR] - Icon button - top-right
+- Filter icon:
+  + Building - User Group buildings only
+  + Asset System - User Group systems only
+  + Status - All / Active / Inactive
+- Asset list - Scrollable:
+  + Item: Asset Code / Name / Asset System / Location / Status badge
+  + Tap => Asset Detail (6.3.2)
+- Pull-to-refresh
+- Empty state: 'No assets found within your scope.'
+- Load more on scroll
+- No action buttons (read-only)
+--- USER FLOW ---
+Screen: Asset List (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- Scoped to User Group (Building AND System must both match). Read-only.
+
+1. Supervisor navigates to Assets in bottom navigation.
+2. System loads assets matching User Group scope.
+3. Supervisor searches or filters => list updates.
+4. Supervisor taps [Scan QR] => camera opens:
+   4.1. Asset in scope => navigates to Asset Detail (6.3.2).
+   4.2. Asset out of scope => error toast: 'This asset is outside your scope.'
+   4.3. QR unreadable => toast: 'Unable to scan. Please search manually.'
+5. Supervisor taps asset => Asset Detail (6.3.2).
+6. Pull-to-refresh => reloads list.
+7. Empty state: 'No assets found within your scope.'
+
+Edge cases:
+- Network unavailable => cached list with banner.
+- Camera permission denied => QR scan unavailable; manual search only.
+- List fails => 'Failed to load assets. Please try again.'
+
+################ ID 6.3.2 | (cont) > View Asset Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile. Read-only.
+- Scoped to Supervisor's User Group scope.
+- Full asset detail: all sections + Maintenance History.
+--- FIELDS/COMPONENTS ---
+Screen: Asset Detail (MSP Supervisor Mobile - Read-only)
+
+- Back arrow
+- Asset Name - Display - Large bold title
+- Status badge
+
+Section: Asset Classification (read-only)
+- Asset System / Sub-system / Asset Type
+
+Section: Location (read-only)
+- Building / Floor / Area/Unit
+
+Section: Asset Details (read-only)
+- Asset Code / Model / Serial Number / Brand / Purchase Date / Status
+
+Section: Maintenance History (read-only)
+- List: WO ID / Plan Name / Round / Completed Date / Technician / Status
+- Tap WO ID => WO Detail
+- Empty state: "No maintenance history."
+
+Section: Pending WOs (read-only)
+- List: WO ID / Type / Status
+- Tap WO ID => WO Detail
+- Empty state: "No pending work orders."
+
+No action buttons - fully read-only.
+--- USER FLOW ---
+Screen: Asset Detail (MSP Supervisor Mobile - Read-only)
+
+Preconditions:
+- MSP Supervisor authenticated. Asset within User Group scope. Read-only.
+
+1. Supervisor taps asset from list (or navigates from QR scan) => Asset Detail loads.
+2. System renders:
+   + Header: Asset Name (bold) / Asset Code / Status badge.
+   + Classification section: Asset System / Sub-system / Asset Type.
+   + Location section: Building / Floor / Area/Unit.
+   + Asset Details section: Model / Serial Number / Brand / Purchase Date / Status.
+3. Maintenance History section:
+   + Items: WO ID / Plan Name / Round / Completed Date / Technician / Status badge.
+   + Shows Closed WOs within Supervisor's scope only.
+   + Tap WO ID => navigates to WO Detail (6.2.3).
+   + Empty: "No maintenance history."
+4. Pending WOs section:
+   + Items: WO ID / Type / Status badge / Assigned Date.
+   + Tap WO ID => WO Detail (6.2.3).
+   + Empty: "No pending work orders."
+5. No Edit / Deactivate buttons. All sections read-only.
+
+Edge cases:
+- WOs outside Supervisor's scope not shown in history (scoped display).
+- Asset has 50+ WOs => pagination with "Load more" in history sections.
+- Detail fails to load => "Failed to load asset details. Please go back and try again."
+
+################ ID 6.3.4 | (cont) > View Spare Part List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Supervisor on mobile. Read-only.
+- Scoped to Supervisor's User Group scope: spare parts compatible with group's Asset Systems within group's Buildings.
+- Primary use: check available stock before submitting a spare part request (6.2.6) for a WO.
+--- FIELDS/COMPONENTS ---
+Screen: Spare Part List (MSP Supervisor Mobile - Read-only)
+
+- Search bar - Placeholder: "Search by name or code"
+- Filter icon:
+  + Status - Dropdown - All / Active / Inactive
+- Spare Part list - Scrollable:
+  + Each item: Code / Name / Asset System / Available Stock (highlighted) / Total Stock / Status badge
+  + Tap item => read-only Spare Part Detail:
+    - Stock counters: Available (large, green) / On-Hold / Total
+    - All sections in mobile-optimized layout
+    - Stock history log (last 10 entries, Load more)
+    - No edit actions
+- Pull-to-refresh - updates stock levels in real time
+- Empty state: "No spare parts found within your scope."
+- Load more on scroll
+--- USER FLOW ---
+Screen: Spare Part List (MSP Supervisor Mobile)
+
+Preconditions:
+- MSP Supervisor authenticated.
+- List scoped to Supervisor's User Group (Asset Systems AND Buildings must both match).
+- Read-only - no create, edit, or deactivate.
+
+1. Supervisor navigates to Inventories in bottom navigation.
+2. System loads spare parts matching User Group scope.
+3. Supervisor searches by name or code => list filters in real time.
+4. Supervisor taps Status filter => All / Active / Inactive.
+5. Supervisor taps a spare part => read-only detail view showing:
+   + Available stock prominently (most important for requesting parts).
+   + On-Hold and Total stock counters.
+   + Stock history log (last 10 entries, [Load more]).
+6. Supervisor pulls down => refreshes stock levels (important before submitting spare part request 6.2.6).
+7. Empty state: "No spare parts found within your scope."
+
+Primary use: Supervisor checks Available stock BEFORE creating a spare part request to avoid submitting a request that will be flagged as Unavailable.
+
+Edge cases:
+- Available = 0 => highlighted in red; label: "Out of stock."
+- Network unavailable => cached list with banner.
+- Part detail fails to load => "Failed to load spare part details. Please try again."
+
+################ ID 6.4 | Push Notification > Push Notification ################
+
+################ ID 6.4.1 | Push Notification > Receive Push Notification ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- FCM delivery to MSP Supervisor mobile devices.
+- Trigger events: New Technician Request / WO Ready to Assign / Verification Rejected / Spare Part events / Maintenance Plan Approved/Rejected.
+- Online: immediate. Offline: FCM queues until reconnect (max 28 days).
+- Logout unregisters FCM token.
+--- FIELDS/COMPONENTS ---
+Push notification (device OS) - System-triggered automation - No dedicated UI screen rendered.
+
+Notification structure per event:
+- Title: short label (e.g., "New Technician Request")
+- Body: descriptive message with WO ID and Building
+- Action: deep link to relevant screen on tap
+
+In-app bell icon shows unread notification count badge.
+--- USER FLOW ---
+System Process: Push Notification (MSP Supervisor Mobile)
+
+--- Delivery mechanism ---
+1. System event triggers notification for MSP Supervisor.
+2. Backend sends payload to Firebase Cloud Messaging (FCM).
+3. FCM routes to all registered devices for this Supervisor account.
+4. Online device => delivered immediately.
+5. Offline device => FCM queues; delivered when device comes online (expire after 28 days).
+
+--- Trigger events ---
+
+New Technician Ad-hoc Request (status = Technician Request):
+Title: "New Technician Request"
+Body: "Technician [Name] submitted an ad-hoc work order request. Tap to review."
+Action: opens WO Detail (6.2.3).
+
+WO Ready to Assign (BM approved, status = Pending - Unassigned):
+Title: "Work Order Ready for Assignment"
+Body: "Work Order [ID] for [Building Name] is approved and ready for Technician assignment."
+Action: opens WO Detail (6.2.3).
+
+Verification Rejected by BM (BM returned Verified WO to Supervisor):
+Title: "Work Order Returned by Building Manager"
+Body: "Work Order [ID] rejected by [BM Name]. Please review and resubmit."
+Action: opens WO Detail (6.2.3) showing Verification Rejected banner.
+
+Spare Part Request Approved by BM:
+Title: "Spare Part Request Approved"
+Body: "Building Manager approved the spare part request for Work Order [ID]."
+Action: opens WO Detail (6.2.3).
+
+Spare Part Request Rejected by BM:
+Title: "Spare Part Request Rejected"
+Body: "Building Manager rejected the spare part request for Work Order [ID]."
+Action: opens WO Detail (6.2.3).
+
+Spare Part Unavailable:
+Title: "Spare Part Unavailable"
+Body: "Spare part [Name] is unavailable for Work Order [ID]. BM has been notified."
+Action: opens WO Detail (6.2.3).
+
+Stock Available (after restock resolves Unavailable):
+Title: "Spare Part Now Available"
+Body: "Spare part [Name] is now available for Work Order [ID]."
+Action: opens WO Detail (6.2.3).
+
+Maintenance Plan Approved by BM:
+Title: "Maintenance Plan Approved"
+Body: "Your maintenance plan [Name] has been approved. WOs will be generated on the next cycle."
+Action: navigates user to log in to web portal (no plan management on mobile).
+
+Maintenance Plan Rejected by BM:
+Title: "Maintenance Plan Rejected"
+Body: "Your maintenance plan [Name] was rejected. Reason: [reason]. Please revise and resubmit."
+Action: navigates user to log in to web portal.
+
+--- In-app notification handling ---
+6. App open (foreground): in-app banner at top, auto-dismisses after 4 seconds, tap to navigate.
+7. App in background: OS notification in system tray, badge count increments.
+8. App closed: OS notification shown, tap to cold-start app and navigate.
+9. Notification bell icon shows unread badge count.
+10. Tapping notification navigates to relevant screen and marks as read.
+
+--- Permission and lifecycle ---
+11. First install: OS requests notification permission.
+12. If denied => no push notifications. In-app prompt to enable in device Settings.
+13. Logout => FCM token unregistered => no notifications until next login.
+14. App reinstall => FCM token regenerated => re-registered on next login.
+
+Edge cases:
+- Notification for a WO already processed => tapping shows current (processed) status.
+- Multiple notifications received offline => batched delivery on reconnect.
+- FCM token expires or changes => refreshed on next app open.
+================================================================
+PLATFORM SECTION: Mobile - MSP Technician App (Module 7)
+================================================================
+
+################ ID 7.1 | Authentication & Dashboard > Authentication & Dashboard ################
+
+################ ID 7.1.1 | Authentication & Dashboard > Login ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Technician on mobile (Android & iOS).
+- Account created by Super Admin, Building Manager, or MSP Supervisor.
+- Technician MUST belong to a User Group. Scope defined by User Group: buildings + asset systems.
+- On successful login => Dashboard (7.1.5) showing only Technician's own assigned WOs.
+- If valid session exists => system skips Login, navigates to Dashboard.
+- Maximum 5 consecutive failed attempts before 15-minute lockout.
+- All connections use HTTPS/SSL with TLS 1.2+.
+--- FIELDS/COMPONENTS ---
+Screen: Login (MSP Technician Mobile)
+
+- EZAxis logo - Display - Centered top
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email" - Max 100 characters
+- Password - Text field (masked) - Required - Placeholder: "Enter your password" - Min 8 characters - Show/hide toggle
+- Forgot Password? - Hyperlink - Navigates to Forgot Password (7.1.3)
+- Login - Button - Primary - Full-width - Large tap target
+- Loading indicator while authenticating
+--- USER FLOW ---
+Screen: Login (MSP Technician Mobile)
+
+Preconditions:
+- No authentication required - entry point for unauthenticated MSP Technician on mobile.
+- Account must exist with role = MSP Technician AND must belong to a User Group.
+- If valid session token stored on device => system skips Login and navigates to Dashboard.
+
+1. App opens. System checks for stored session token:
+   1.1. Valid token => navigates to Dashboard (7.1.5) showing only this Technician's WOs => flow ends.
+   1.2. No token or expired => renders Login screen.
+
+2. Technician enters email and password => taps [Login].
+   + Loading spinner shown while authenticating.
+
+3. System validates fields:
+   3.1. Email empty => inline error: "Email is required."
+   3.2. Password empty => inline error: "Password is required."
+   3.3. Email format invalid => inline error: "Please enter a valid email address."
+
+4. System checks failed attempt counter:
+   4.1. >= 5 failed attempts within 15 min => error toast: "Too many failed attempts. Please try again in 15 minutes."
+
+5. System queries backend:
+   5.1. Email not found or role != MSP Technician => error toast: "Invalid email or password." => increments counter.
+   5.2. Account Inactive => error toast: "Your account is not active. Please contact your Supervisor."
+   5.3. Account has no User Group => error toast: "Your account has no scope assigned. Please contact your Supervisor."
+   5.4. Password mismatch => error toast: "Invalid email or password." => increments counter.
+   5.5. All valid:
+    + Session token stored securely on device (Keychain/Keystore).
+    + Failed attempt counter reset.
+    + Last login timestamp updated.
+    + Navigates to Dashboard (7.1.5).
+
+Edge cases:
+- Network unavailable => error toast: "No internet connection. Please check your network and try again."
+- Technician's User Group deactivated => login succeeds but app shows empty scope data.
+- Token expired server-side => detected on first API call => redirects to Login: "Your session has expired. Please log in again."
+- Error message says "contact your Supervisor" (not "administrator") because Technician's point of contact is their Supervisor.
+
+   5.X. Account Status = Pending (invitation not yet accepted) => does NOT create session => error: "Your account is not yet activated. Please check your email for the invitation link."
+
+################ ID 7.1.2 | (cont) > Logout ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated MSP Technician from any screen on mobile.
+- Accessible from Profile/More in bottom navigation.
+- Native alert confirmation before logout.
+- On logout: session token invalidated server-side and removed from device.
+--- FIELDS/COMPONENTS ---
+Component: Logout (MSP Technician Mobile)
+
+Access path: Bottom navigation => Profile/More => Sign out
+
+- Sign out - Menu item
+
+Alert: Confirm Sign Out
+- Message: "Are you sure you want to sign out?"
+- Sign out - Button - Destructive
+- Cancel - Button - Default
+--- USER FLOW ---
+Flow: Logout (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated on mobile.
+
+1. Technician taps Profile or More icon in bottom navigation.
+2. Profile/Settings screen opens. Technician taps [Sign out].
+3. Native OS alert:
+   + Title: "Sign Out"
+   + Message: "Are you sure you want to sign out?"
+   + [Sign out] (destructive) | [Cancel].
+4a. Technician taps [Sign out]:
+   + Session token invalidated server-side.
+   + Token removed from device secure storage.
+   + Cached data cleared from app local storage.
+   + FCM push token unregistered (no more notifications until next login).
+   + App navigates to Login screen (7.1.1).
+4b. Technician taps [Cancel]:
+   + Alert dismisses. Technician remains authenticated.
+
+Edge cases:
+- Network unavailable during logout => local token and cache removed; app navigates to Login. Server-side invalidation retried when online or expires naturally.
+- Session expires while app in background => on next foreground API call, 401 detected => clears token => navigates to Login: "Your session has expired."
+- App force-closed and reopened => session token re-checked on app open (step 1 of Login).
+
+################ ID 7.1.3 | (cont) > Forgot Password ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by unauthenticated MSP Technicians from Login screen on mobile.
+- Same 2-screen OTP-based flow as Supervisor Mobile (6.1.3).
+- OTP sent to registered email via AWS SES/SendGrid.
+- OTP validity: 10 minutes (assumed - flagged for BA review).
+- After reset => navigates to Login (7.1.1).
+--- FIELDS/COMPONENTS ---
+Screen 1 - Enter Email (Mobile)
+
+- Page title: "Forgot Password"
+- Instruction text: "Enter your registered email address. We will send you a verification code."
+- Email - Text field - Required - Keyboard type: email - Placeholder: "Enter your email"
+- Continue - Button - Primary - Full-width
+- Back to Login - Hyperlink
+
+Screen 2 - Enter OTP and New Password (Mobile)
+
+- Page title: "Reset Password"
+- Instruction text: "Enter the verification code sent to [email]."
+- OTP Code - Text field - Required - Keyboard type: numeric - 6 digits
+- Resend Code - Hyperlink - Active after 60 seconds - Shows countdown timer
+- New Password - Text field (masked) - Required - Min 8 characters - Show/hide toggle
+- Confirm New Password - Text field (masked) - Required - Must match
+- Reset Password - Button - Primary - Full-width
+- Back to Login - Hyperlink
+--- USER FLOW ---
+Screen: Forgot Password (MSP Technician Mobile)
+
+Preconditions:
+- No authentication required. Must have an active MSP Technician account.
+
+Screen 1 - Enter Email:
+1. Technician taps [Forgot Password?] on Login => Screen 1.
+2. Enters email (keyboard: email type) => taps [Continue]:
+   2.1. Empty => error: "Email is required."
+   2.2. Format invalid => error: "Please enter a valid email address."
+   2.3. Not found in MSP Technician accounts => error: "No account found with this email address."
+   2.4. Account Inactive => error: "Your account is not active. Please contact your Supervisor."
+   2.5. Network unavailable => error: "No internet connection."
+   2.6. Valid => OTP sent via AWS SES/SendGrid => navigates to Screen 2.
+3. Taps [Back to Login] => navigates to Login (7.1.1).
+
+Screen 2 - Enter OTP & New Password:
+4. Technician enters OTP (numeric keyboard, 6 digits) / New Password / Confirm.
+5. Taps [Reset Password]:
+   5.1. OTP empty => error: "Please enter the verification code."
+   5.2. Wrong format => error: "Verification code must be 6 digits."
+   5.3. OTP incorrect => error: "Invalid verification code." After 5 wrong attempts => OTP invalidated => restart from Screen 1.
+   5.4. OTP expired => error: "This code has expired. Please request a new one." => returns to Screen 1.
+   5.5. Password < 8 chars => error: "Password must be at least 8 characters."
+   5.6. Confirm mismatch => error: "Passwords do not match."
+   5.7. Network unavailable => error: "No internet connection."
+   5.8. All valid:
+    + Password updated. All active sessions invalidated.
+    + Navigates to Login (7.1.1).
+    + Success toast: "Password reset successfully. Please log in with your new password."
+6. [Resend Code] (active after 60s with countdown): new OTP sent => previous invalidated.
+
+Edge cases:
+- Email delivery fails => "Failed to send verification code. Please try again later."
+- App closed mid-reset => returns to Login (Screen 2 state not persisted).
+
+################ ID 7.1.4 | (cont) > Multi-Language Switch ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by authenticated MSP Technicians from any screen on mobile.
+- Supports English (EN) and Vietnamese (VI).
+- Language switch applies immediately without app restart.
+- Selected language persisted per user account across sessions and devices.
+--- FIELDS/COMPONENTS ---
+Component: Language Switcher (MSP Technician Mobile)
+
+Access path: Profile / Settings => Language
+
+- Language - Selection list or toggle
+- Options: English (EN) | Ti?ng Vi?t (VI)
+- Currently selected language highlighted
+- Tap to switch - applies immediately
+--- USER FLOW ---
+Flow: Multi-Language Switch (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. Language accessible from Profile/Settings.
+
+1. Technician navigates to Profile => Settings => Language.
+2. Selection list: English (EN) | Ti?ng Vi?t (VI). Current highlighted.
+3. Technician taps alternate language:
+   3.1. App immediately re-renders all UI text without restart.
+   3.2. Data content (asset names, descriptions) NOT translated.
+   3.3. Preference saved to account via API.
+   3.4. Save succeeds => persists across sessions and devices.
+   3.5. Save fails => UI shows new language this session only => toast: "Failed to save language preference. The change will apply to this session only."
+4. Taps same language => no action.
+
+Edge cases:
+- Language switched offline => UI changes locally; server sync fails; reverts on next login.
+- Language switch while completing checklist => field values preserved; labels update.
+
+################ ID 7.1.5 | (cont) > Dashboard ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Simplified dashboard - scoped to Technician's own WOs only.
+- KPI: Assigned / In Progress / Completed / Completion Rejected.
+--- FIELDS/COMPONENTS ---
+Screen: Dashboard (Technician Mobile)
+- KPI cards: Assigned / In Progress / Completed / Completion Rejected
+- Recent WO list - Latest 5 assigned/active WOs
+- Bottom nav: Home / Work Orders / Assets / More
+--- USER FLOW ---
+Screen: Dashboard (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. Dashboard scoped to this Technician's own assigned WOs ONLY.
+
+1. App opens to Dashboard. System loads Technician's own WO summary (no building filter needed - always scoped to self).
+
+2. System fetches and renders:
+   2.1. KPI cards (Technician-relevant, all showing counts for this Technician only):
+    + Assigned: WOs assigned to Technician but not yet started.
+    + In Progress (Started): WOs currently in progress.
+    + Pending Review: WOs Technician submitted, awaiting Supervisor review.
+    + Completion Rejected: WOs returned by Supervisor requiring correction (urgent  shown in red).
+   2.2. My Work Orders: list of most recent 5 WOs with status badges. Each item tappable.
+   2.3. Upcoming Work Orders: WOs due in the next 7 days, sorted by due date. Overdue WOs shown first in red.
+
+3. Technician taps a KPI card => navigates to Assigned WO List (7.2.3) filtered to that status.
+
+4. Technician taps a WO in My Work Orders or Upcoming => navigates to WO Detail (7.2.4).
+
+5. Technician pulls down => refreshes all data.
+
+6. Completion Rejected KPI card: shown prominently in red with a badge and notification indicator. Tap => WO List filtered to Completion Rejected status. Technician should address these first.
+
+Edge cases:
+- Technician has no assigned WOs => "My Work Orders" shows: "No work orders assigned. Check back later."
+- Dashboard section fails to load => "Failed to load. Tap to retry."
+- Offline => cached dashboard with banner: "Showing cached data. Pull to refresh when online."
+
+################ ID 7.1.6 | (cont) > Offline Mode ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- App supports limited offline functionality.
+- Offline: view last cached WO list (read-only). No write/submit actions.
+- Reconnect => auto-refresh.
+- Cache TTL: PENDING confirmation (assumed 24 hours).
+--- FIELDS/COMPONENTS ---
+Offline behaviour:
+- Offline banner - shown at top when no internet
+- WO List - read-only - last cached data
+- All action buttons disabled while offline
+- Error on action attempt: You are offline. Please reconnect.
+--- USER FLOW ---
+Screen: Offline Mode (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- Device has no internet connection.
+
+1. App detects loss of internet connectivity:
+   + Persistent offline banner appears at top of all screens: "You are offline. Some features are unavailable."
+   + Banner color: amber/yellow to distinguish from critical errors.
+
+2. What is available offline:
+   + View last cached WO list (read-only - as of last sync).
+   + View last cached WO details (checklist, asset info, location).
+   + View last cached asset list and asset details.
+   + View last cached spare part list (for reference).
+   + Cache TTL: assumed 24 hours (pending client confirmation - flagged for BA review).
+
+3. What is NOT available offline (all write operations and new data fetches):
+   + Starting a WO (requires server-side status change).
+   + Submitting checklist updates.
+   + Uploading photos.
+   + Submitting sign-off.
+   + Creating ad-hoc requests.
+   + Requesting spare parts.
+   + Logging out (server-side session invalidation unavailable - see edge case).
+
+4. Technician attempts a disabled action (e.g., taps [Start Work Order]):
+   + Error toast: "You are offline. Please reconnect to perform this action."
+   + Action does NOT proceed.
+
+5. App detects internet reconnection:
+   + Offline banner disappears (or changes to green "Back online" for 3 seconds then dismisses).
+   + All cached data auto-refreshes in background.
+   + Pending actions (if any queued) are synced automatically.
+   + All action buttons re-enabled.
+
+6. App is closed while offline and reopened while still offline:
+   + Cached data is displayed. Offline banner shown.
+   + Last sync timestamp shown in a subtle label: "Last synced: [time]."
+
+Edge cases:
+- Technician is mid-checklist fill when connection drops => data typed into form fields is preserved in app memory. Fields are read-only or save-to-local-draft until reconnect. On reconnect, Technician can resume and submit. (Local draft persistence is pending client confirmation - flagged for BA review.)
+- Cache TTL expired (> 24 hours offline) => app shows: "Cached data has expired. Please reconnect to reload your work orders."
+- Technician tries to logout while offline => local token and cache cleared; app navigates to Login. Server-side invalidation occurs when device reconnects.
+- Photo upload queued offline (if offline queue is implemented) => photos uploaded automatically on reconnect. If not implemented in MVP => Technician must retake and upload after reconnect.
+
+################ ID 7.2 | Work Order Execution > Work Order Execution ################
+
+################ ID 7.2.1 | Work Order Execution > Create Ad-hoc Work Order (Technician-initiated) ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician creates ad-hoc request for newly discovered issues.
+- CONFIRMED flow: Technician creates => status: Technician Request => Supervisor reviews:
+  + Supervisor approves => Pending => BM approves => Pending - Unassigned => Supervisor assigns.
+  + Supervisor declines => Ad-hoc Declined => Technician edits and resubmits.
+- CONFIRMED: Technician Request status = ad-hoc WO created by MSP Technician, requires MSP Supervisor confirmation BEFORE it can be submitted to BM for approval. Flow: Tech creates => Technician Request => Supervisor approves/declines => if approved: Pending (BM approval queue).
+--- FIELDS/COMPONENTS ---
+Screen: Create Ad-hoc Work Order (Technician Mobile)
+
+Section: Asset & Location
+- Asset System - Dropdown - Required - Technician's scope
+- Asset Sub-system - Dropdown - Optional
+- Asset Type - Dropdown - Optional
+- Asset - Dropdown - Optional - or [Scan QR] to auto-fill
+- Building - Dropdown - Required - Technician's buildings
+- Floor - Dropdown - Optional
+- Area/Unit - Dropdown - Optional
+
+Section: Work Details
+- Description - Textarea - Required - Max 1000 characters
+- Duration of Work - Text field - Optional
+- Priority - Dropdown - Optional - Low / Medium / High / Urgent
+- Attachments - File input - Optional
+
+- Cancel - Secondary | Submit - Primary
+--- USER FLOW ---
+Flow: Create Ad-hoc Work Order (Technician-initiated)
+
+Preconditions:
+- MSP Technician authenticated.
+- User Group must have at least 1 building and asset system.
+- Use case: Technician is on-site and discovers an issue not covered by any scheduled WO.
+
+1. Technician taps [+ New Request] or [Create Ad-hoc WO] in bottom navigation or WO list.
+2. Create Ad-hoc Request screen loads.
+
+3. Technician fills required fields:
+   - Asset System (required, dropdown restricted to User Group systems).
+   - Asset Sub-system (optional, cascades).
+   - Asset Type (optional, cascades).
+   - Asset (optional, searchable or [Scan QR] to auto-fill):
+     + Taps [Scan QR] => camera opens => scans asset QR.
+     + If asset in scope => Asset, Building, Floor, Area auto-filled.
+     + If asset outside scope => error toast: "This asset is outside your scope."
+   - Building (required, restricted to User Group buildings  or auto-filled from QR).
+   - Floor (optional, cascades from Building).
+   - Area/Unit (optional).
+   - Description (required, textarea, max 1000 chars).
+   - Attachments (optional, JPG/PNG/PDF, max 5MB each, max 5 files, camera or gallery).
+
+4. Technician taps [Submit]:
+   4.1. Asset System not selected => error: "Asset System is required."
+   4.2. Building not selected => error: "Building is required."
+   4.3. Description empty => error: "Description is required."
+   4.4. Description > 1000 chars => error: "Description must not exceed 1000 characters."
+   4.5. Attachment invalid type => error: "Only JPG, PNG, and PDF files are accepted."
+   4.6. Attachment > 5MB => error: "Each file must not exceed 5 MB."
+   4.7. Network unavailable => error: "No internet connection. Please try again."
+   4.8. All valid:
+    + Request created with Status: Technician Request.
+    + MSP Supervisor notified (FCM push + email): "Technician [Name] has submitted an ad-hoc work order request. Please review."
+    + Success toast: "Request submitted to your Supervisor for review."
+    + Navigates back to Ad-hoc Request List (7.2.2).
+
+5. Technician taps [Cancel] => navigates back without saving.
+
+Edge cases:
+- Camera permission not granted => OS permission request. If denied => QR scan unavailable; manual field entry only.
+- QR scan fails (poor lighting, damaged code) => toast: "Unable to scan. Please enter details manually."
+- Network error => "Failed to submit request. Please try again." => no partial record.
+
+################ ID 7.2.2 | (cont) > View Ad-hoc Request List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician tracks status of their submitted ad-hoc requests.
+- Statuses visible: Technician Request / Ad-hoc Declined / Pending / Approval Rejected.
+- CONFIRMED: Technician Request status = ad-hoc WO created by MSP Technician, requires MSP Supervisor confirmation BEFORE it can be submitted to BM for approval. Flow: Tech creates => Technician Request => Supervisor approves/declines => if approved: Pending (BM approval queue).
+--- FIELDS/COMPONENTS ---
+Screen: My Requests (Mobile)
+- Request list: ID / Type badge / Description (truncated) / Status / Created Date
+- Tap request => Request Detail
+- If Ad-hoc Declined => [Edit & Resubmit] shown
+- Pull-to-refresh
+- Empty state: No requests submitted.
+--- USER FLOW ---
+Screen: Ad-hoc Request List (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+
+1. Technician navigates to Requests tab or section.
+2. System loads all ad-hoc requests submitted by this Technician:
+   + Items: Request ID / Building / Asset / Status badge / Created date.
+   + Statuses shown: Technician Request / Ad-hoc Declined / Pending / Approval Rejected / Assigned / Cancelled.
+   + Sorted by created date descending.
+3. Technician applies Status filter to narrow list.
+4. Technician taps a request item:
+   4a. Status = Technician Request / Pending / Approval Rejected / Cancelled => read-only detail view with history log.
+   4b. Status = Ad-hoc Declined:
+    + Detail screen shows rejection reason from Supervisor prominently at top.
+    + [Edit & Resubmit] button visible.
+    + Technician taps [Edit & Resubmit] => Edit form opens pre-filled with all previous data.
+    + Technician modifies as needed and taps [Resubmit]:
+     - Same validation as Create (7.2.1).
+     - Network unavailable => error toast.
+     - Valid => Status => Technician Request (resets to pending Supervisor review).
+     - Supervisor notified: "Technician [Name] has resubmitted an ad-hoc request."
+     - Success toast: "Request resubmitted to Supervisor."
+5. Technician pulls down => refreshes list.
+6. Empty state: "No ad-hoc requests submitted yet."
+
+Edge cases:
+- Technician tries to resubmit a request that was already approved (status changed while editing) => stale status error: "This request has already been processed. Please refresh."
+- Network unavailable => cached list with banner.
+
+################ ID 7.2.3 | (cont) > View Assigned Work Order List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- View all WOs assigned to this Technician (as Main or Sub Technician).
+- Sorted by Due Date - overdue first.
+- Filter by Status.
+
+WO Status reference (per product document):
+Group: Preparation => Draft
+Group: New => Technician Request / Tenant Request / Service Request Accepted / Pending
+Group: Pending => Unassigned (WO approved, ready for Technician assignment)
+Group: In Progress => Assigned / Started
+Group: Review => Completed (Supervisor reviews and signs off before forwarding to BM)
+Group: Approval => Verified (BM reviews, signs, and approves to close)
+Group: Finalized => Closed / Cancelled
+Group: Rejection => Ad-hoc Declined / Approval Rejected / Completion Rejected / Verification Rejected
+--- FIELDS/COMPONENTS ---
+Screen: Work Order List (Technician Mobile)
+- Filter: Status - All / Assigned / Started / Completed / Completion Rejected
+- WO List: ID / Type badge / Asset Code / Location / Due Date (overdue indicator) / Status
+- Pull-to-refresh
+- Empty state: No work orders assigned to you.
+--- USER FLOW ---
+Screen: Assigned Work Order List (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- Shows WOs where this Technician is Main Technician OR Sub Technician.
+
+1. Technician navigates to Work Orders tab in bottom navigation.
+2. System loads all WOs assigned to this Technician (as Main or Sub):
+   + Items: WO ID / Type badge / Asset Code / Building / Location / Due Date / Status badge.
+   + Sorted by: Completion Rejected first (requires urgent action), then overdue by due date, then upcoming by due date.
+   + Overdue WOs: red Due Date + overdue badge.
+   + Completion Rejected WOs: red border or highlight to draw attention.
+3. Technician taps Status filter => filter panel:
+   + All / Assigned / Started / Completed / Completion Rejected / Closed / Cancelled.
+4. Technician taps search bar => searches by WO ID or asset code.
+5. Technician taps a WO => WO Detail & Execution (7.2.4).
+6. Technician pulls down => refreshes.
+7. Infinite scroll => loads next page.
+8. Empty state: "No work orders assigned to you."
+
+Edge cases:
+- Technician is Sub Technician on a WO => WO appears in list with "Sub Technician" label.
+- Network unavailable => cached list with banner.
+- WO Due Date is today (not yet overdue) => shown in amber warning color.
+
+################ ID 7.2.4 | (cont) > View Work Order Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Full WO detail page.
+- Shows: Overview / 5-stage progress bar / Details tab / Execution tab.
+- Action button depends on status: [Start] / [Submit & Sign Off] / [Review & Resubmit].
+- Print Report button.
+--- FIELDS/COMPONENTS ---
+Screen: Work Order Detail (Technician Mobile)
+
+Header:
+- Asset Code - Work Type label
+- WO ID / date / Type badge
+- Print Report - Button - Secondary
+- 5-stage progress bar: New => Pending => In Progress => Review => Approval
+- Stage context label
+
+Action button (status-dependent):
+- Assigned: [Start Work Order] - Primary
+- Started: [Submit & Sign Off] - Primary
+- Completion Rejected: [Review & Resubmit] - Primary
+
+Tabs: Details | Execution
+
+Tab: Details
+- Description / Photos / Remark (read-only)
+
+Tab: Execution (left)
+- Main Technician card + Sub Technician cards (read-only)
+- Work Checklist (N/total): expandable items
+- Part Replacement table: Source / Name / Code / Quantity
+
+Tab: Execution (right)
+- Maintenance Plan: Round / ID / Name / Frequency / View Details (Maintenance WOs)
+- Parent WO (if applicable)
+- Tenant: Name / Phone / Email
+- History log
+
+Completion Rejected section:
+- Rejected by / Time / Reason (read-only)
+--- USER FLOW ---
+Screen: Work Order Detail & Execution (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- WO must be assigned to this Technician (Main or Sub).
+- Status: Assigned, Started, Completed, or Completion Rejected.
+
+1. Technician taps WO from list => WO Detail screen loads.
+2. System renders:
+   + Header: Asset Code  Work Type / WO ID / Type badge.
+   + 5-stage progress bar: New => Pending => In Progress => Review => Approval. Active stage highlighted.
+   + Overview (scrollable): Start Time / End Time (overdue badge if past due) / Time Required / Building / Floor / Area / Asset Code / Asset Type / System.
+
+3. Swipeable tabs:
+   Tab: Details (read-only): Description / Photos (tap => full-screen) / Remark.
+   Tab: Execution (primary working tab):
+   + Work Checklist section: progress indicator (N/total items done).
+     Each item expandable: Item name / Description input (Required/Optional/Off) / Photos upload (Required/Optional/Off).
+   + Part Replacement table: Source / Name / Code / Quantity. [+ Add Part] button.
+   + Maintenance Plan reference (for Maintenance WOs): Round / Plan Name / Frequency.
+   + Tenant contact (for Service Request WOs): Name / Phone / Email.
+   + History log: last 5 entries. [Show all] expands full timeline.
+
+4. Completion Rejected banner (when status = Completion Rejected):
+   + Red banner at top: "Rejected by Supervisor [Name] on [date]. Reason: [reason]."
+
+5. Action buttons  FIXED at bottom of screen:
+   + Status = Assigned: [Start Work Order] (Primary, full-width).
+   + Status = Started: [Submit & Sign Off] (Primary, full-width). Disabled until all Required items completed.
+   + Status = Completion Rejected: [Review & Resubmit] (Primary, full-width).
+   + Status = Completed: no action buttons (awaiting Supervisor review  read-only).
+
+6. [Submit & Sign Off] disabled state:
+   + Grayed out with label: "Complete all required checklist items to submit."
+   + Tapping grayed button shows tooltip: "N required checklist items are incomplete."
+
+Edge cases:
+- Technician is Sub Technician => can view WO and checklist but [Start] and [Submit & Sign Off] only available to Main Technician (flagged for BA confirmation  pending).
+- WO Detail fails to load => "Failed to load work order details. Please go back and try again."
+- Offline => WO Detail shown from cache; all action buttons disabled with offline banner.
+
+################ ID 7.2.5 | (cont) > Start Work Order Execution ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician starts a WO assigned to them.
+- Triggered by [Start Work Order] button on WO Detail.
+- Status: Assigned => Started.
+- Part Replacement recording is done separately during execution in 7.2.8 after WO is Started.
+--- FIELDS/COMPONENTS ---
+Button: [Start Work Order] - Primary - on WO Detail (status = Assigned)
+
+Popup: Confirm Start
+- Message: Start this work order?
+- Confirm + Cancel
+--- USER FLOW ---
+Flow: Start Work Order Execution (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- WO must be in Assigned status.
+- Technician must be the Main Technician on this WO.
+
+1. Technician opens WO Detail (7.2.4) for an Assigned WO.
+2. [Start Work Order] button shown at bottom (full-width, Primary).
+3. Technician taps [Start Work Order].
+4. Native alert:
+   + "Start Work Order [ID]? This will mark the work as in progress."
+   + [Start] | [Cancel].
+5. Technician taps [Start]:
+   5.1. Network unavailable => error toast: "No internet connection. Please try again."
+   5.2. WO status changed concurrently (e.g., Supervisor reassigned or cancelled) => error toast: "Work order status has changed. Please refresh."
+   5.3. All valid:
+    + WO status => Started.
+    + Start Time recorded automatically with current timestamp.
+    + MSP Supervisor notified (FCM push): "Technician [Name] has started Work Order [ID]."
+    + History log: "Started by [Technician Name] at [timestamp]."
+    + [Start Work Order] button replaced by [Submit & Sign Off] (disabled until checklist complete).
+    + Execution tab becomes fully interactive.
+    + Success toast: "Work order started."
+6. Technician taps [Cancel] => alert dismisses, no change. WO remains Assigned.
+
+Edge cases:
+- Technician accidentally taps Start => no undo. WO is in Started status. Technician must complete or wait for Supervisor action.
+- Network times out during Start => timeout error after 15 seconds; WO status NOT changed; Technician can retry.
+
+################ ID 7.2.6 | (cont) > Complete Work Checklist Items ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician ticks off checklist items during WO execution (status: Started).
+- Each item has: Description input (Required/Optional/Off per item setting) + Photos upload (Required/Optional/Off).
+- PENDING: Checklist preserved or reset after Completion Rejected (flagged for BA review).
+--- FIELDS/COMPONENTS ---
+Embedded in WO Detail Execution tab:
+
+Work Checklist section:
+- Checklist counter: N/total items completed
+- Each item - Expandable card:
+  + Item name + completion tick (tap to toggle done/undone)
+  + Description - Text input - Required/Optional per item setting
+  + Photos - Multi-upload - Required/Optional per item setting - Camera or gallery
+--- USER FLOW ---
+Flow: Complete Work Checklist Items (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- WO must be in Started status.
+- Technician is the Main Technician.
+
+This flow is embedded within WO Detail Execution tab.
+
+1. Technician navigates to WO Detail (7.2.4) => swipes to Execution tab.
+2. Checklist section shows progress indicator (e.g., "2 of 5 items done") and list of checklist items.
+
+3. Technician taps a checklist item card => card expands showing:
+   + Item name (read-only, inherited from Asset Type definition).
+   + Description field (if setting = Required or Optional):
+    - Text area with placeholder: "Enter description..."
+    - If Required: red asterisk shown. Must be filled before submission.
+    - If Optional: no asterisk. Can be left empty.
+    - If Off: field not shown.
+   + Photos section (if setting = Required or Optional):
+    - Thumbnail grid for uploaded photos.
+    - [+ Add Photo] button => camera or gallery picker.
+    - If Required: red asterisk. At least 1 photo required.
+    - If Optional: can have 0 photos.
+    - If Off: section not shown.
+   + [Done] or checkmark button to mark item as complete.
+
+4. Technician fills Description (if applicable) and uploads Photos (if applicable).
+
+5. Technician taps [Done] on an item:
+   5.1. If Description = Required AND field empty => item marked INCOMPLETE, warning indicator shown: "Description required."
+   5.2. If Photos = Required AND no photos uploaded => item marked INCOMPLETE: "At least 1 photo required."
+   5.3. All required fields for this item filled => item marked COMPLETE (checkmark + green indicator).
+   5.4. Progress counter updates: "3 of 5 items done."
+
+6. Technician taps a completed item => can re-open to edit Description or add/remove Photos while WO is in Started status.
+
+7. Real-time save: all Description text and photo uploads are auto-saved to local draft on every change (no manual save needed).
+
+Edge cases:
+- Technician loses connection mid-fill => data typed is preserved in local draft. On reconnect, draft synced with server.
+- Photo upload fails (network error) => error per photo: "Photo upload failed. Please retry." Other photos unaffected.
+- Photo exceeds size limit => error: "Photo is too large. Maximum size is 5 MB per photo."
+- Technician tries to mark [Done] on an Optional item with no Description and no Photos => item can be marked Done if both settings are Optional or Off.
+- Device storage full => photo capture fails => error: "Not enough storage space to save photo. Please free up space and try again."
+
+################ ID 7.2.7 | (cont) > Upload Execution Photos ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician uploads evidence photos during WO execution.
+- Photos tied to specific checklist items (per Required/Optional/Off setting).
+- Supports camera capture or gallery upload.
+--- FIELDS/COMPONENTS ---
+Embedded in checklist item card:
+- Photos - Multi-upload - Camera or gallery
+  + Required/Optional label per item
+  + Thumbnail grid after upload
+  + Delete per photo (tap X on thumbnail)
+  + Max file size: 5 MB per photo
+  + Accepted: JPG/PNG
+--- USER FLOW ---
+Flow: Upload Execution Photos (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. WO in Started status. Main Technician.
+
+This flow is embedded within each checklist item in the Execution tab.
+
+1. Technician expands a checklist item card.
+2. In the Photos section, Technician taps [+ Add Photo].
+3. Bottom sheet slides up with options:
+   + [Take Photo] (camera icon)  opens device camera.
+   + [Choose from Library] (gallery icon)  opens photo gallery.
+   + [Cancel]  dismisses sheet.
+
+--- Camera path ---
+4a. Technician taps [Take Photo]:
+   4a.1. Camera permission not granted => OS permission dialog appears. If denied => error: "Camera permission required. Please enable in device Settings => App => Camera."
+   4a.2. Camera opens. Technician frames the evidence and taps capture.
+   4a.3. Preview screen shows the captured photo.
+   4a.4. Technician taps [Use Photo] => photo added to checklist item's photo grid. Thumbnail appears.
+   4a.5. Technician taps [Retake] => camera reopens.
+
+--- Gallery path ---
+4b. Technician taps [Choose from Library]:
+   4b.1. Photo library permission not granted (iOS) => OS permission dialog. If denied => error: "Photo library permission required. Please enable in Settings."
+   4b.2. Photo library opens. Technician selects a photo.
+   4b.3. Selected photo added to checklist item's photo grid. Thumbnail appears.
+
+--- After photo added ---
+5. Photo uploaded to server in background (while Technician continues with other checklist items):
+   5.1. Upload in progress => small spinner shown on thumbnail.
+   5.2. Upload succeeds => spinner replaced by checkmark (or simply disappears).
+   5.3. Upload fails => error indicator on thumbnail: [Retry] tap to retry upload.
+
+6. Technician taps [X] on a photo thumbnail => removes photo from the item.
+   + Confirmation: "Remove this photo?" => [Remove] | [Keep].
+   + Confirmed => photo removed from item and deleted from server.
+
+7. Maximum photos per item: no defined limit in spec (flagged for BA review  recommend 10 per item).
+
+Edge cases:
+- Photo file > 5MB => error: "Photo is too large. Maximum 5 MB per photo."
+- Photo taken in offline state => stored locally. Uploaded automatically on reconnect.
+- Device camera malfunctions => OS error returned; app shows: "Unable to access camera. Please try again."
+
+################ ID 7.2.8 | (cont) > Record Part Replacement ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician records spare parts used during WO execution.
+- 2 sources:
+  + Use Existing IMS Stock: select from inventory => On-Hold set => stock-out on BM approval.
+  + Purchase Separately: free-text record only, no inventory impact.
+- Accessible while WO is in Started status.
+--- FIELDS/COMPONENTS ---
+Embedded in WO Detail Execution tab:
+
+Part Replacement section:
+- [+ Add Part] - Button - opens source selection
+- Source selection:
+  + Use Existing IMS Stock => searchable dropdown (Part Name / Code / Available Stock) + Quantity (Min: 1)
+  + Purchase Separately => Part Name text field + Quantity
+- Part Replacement table: Source / Name / Code / Quantity / Delete icon
+- Delete icon => removes entry
+--- USER FLOW ---
+Flow: Record Part Replacement (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. WO in Started status. Main Technician.
+
+This flow is embedded in the Execution tab, Part Replacement section.
+
+1. Technician scrolls to Part Replacement section in Execution tab.
+2. Current entries shown in a list (Source / Part Name / Code / Quantity).
+3. Technician taps [+ Add Part].
+4. Bottom sheet slides up: "Add Part Replacement"
+   + Source toggle: [IMS Stock] | [Purchase Separately].
+
+--- IMS Stock path ---
+5a. Technician selects [IMS Stock]:
+   + Spare Part: searchable dropdown (parts scoped to User Group, Active only). Shows: Name / Code / Available Stock.
+   + Quantity: numeric keyboard input, min 1.
+   + Taps [Add]:
+    5a.1. Spare Part not selected => error: "Please select a spare part."
+    5a.2. Quantity < 1 => error: "Please enter a valid quantity."
+    5a.3. Quantity > Available stock => warning (not blocked): "Requested quantity exceeds available stock. Continue?" => Technician confirms => proceeds.
+    5a.4. Valid => entry added to Part Replacement table. Source = IMS Stock / Part Name / Code shown.
+    5a.5. Note: Stock-Out and On-Hold are handled by BM approval workflow (7.2.9). This step is recording only.
+
+--- Purchase Separately path ---
+5b. Technician selects [Purchase Separately]:
+   + Part Name: text field (required, max 100 chars). No dropdown (no system code available).
+   + Quantity: numeric input, min 1.
+   + Taps [Add]:
+    5b.1. Part Name empty => error: "Part name is required."
+    5b.2. Quantity < 1 => error: "Please enter a valid quantity."
+    5b.3. Valid => entry added to table. Source = Purchase Separately / Name shown (no Code column).
+
+6. Technician taps Delete icon on an entry:
+   + Native confirm: "Remove this part entry?"
+   + Confirmed => entry removed from table.
+   + For IMS Stock entries: if an On-Hold reservation was already created for this entry, system releases the On-Hold automatically.
+
+7. Technician can add multiple entries (both IMS Stock and Purchase Separately, mixed).
+
+Edge cases:
+- Spare Part list fails to load => error in dropdown: "Failed to load spare parts. Please try again."
+- Technician removes an IMS Stock entry after BM already approved it (stock-out done) => system should flag this conflict. Flagged for BA review.
+- Network unavailable when adding => entry saved locally; synced on reconnect.
+
+################ ID 7.2.9 | (cont) > Create Spare Parts Request ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician requests spare parts during WO execution (status: Started).
+- Goes to BM for approval.
+- On approval => On-Hold set => stock-out triggered.
+- Different from Part Replacement recording (7.2.8) which records actual used parts.
+--- FIELDS/COMPONENTS ---
+Embedded in WO Detail:
+- [Request Spare Parts] - Button - available when status = Started
+- Spare Part - Dropdown - Required - Searchable - Available parts in Technician's scope
+  + Shows: Part Name / Code / Available Stock
+- Quantity - Number - Required - Min: 1
+- Notes - Textarea - Optional
+- [+ Add another part] + Submit Request - Primary
+--- USER FLOW ---
+Flow: Create Spare Parts Request (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. WO in Started status. Main Technician.
+- Note: This is different from Part Replacement recording (7.2.8). This is a formal request to BM for stock-out approval.
+
+1. Technician opens WO Detail => Execution tab => taps [Request Spare Parts].
+2. Bottom sheet slides up: "Request Spare Parts"
+   + Multiple part entries supported via [+ Add another part].
+   + Per entry:
+    - Spare Part: searchable dropdown (User Group scope, Active only). Shows: Name / Code / Available Stock.
+    - Quantity: numeric input, min 1.
+   + Notes: optional textarea.
+
+3. Technician taps [Submit Request]:
+   3.1. Spare Part not selected => error: "Please select a spare part."
+   3.2. Quantity < 1 => error: "Please enter a valid quantity."
+   3.3. Duplicate part entries => warning: "Duplicate part detected. Please combine into one entry."
+   3.4. Requested qty > Available stock => warning (not blocked): "Requested quantity exceeds available stock. This request will be flagged as Unavailable." => Technician confirms.
+   3.5. Network unavailable => error toast: "No internet connection."
+   3.6. All valid:
+    + For each part: If stock sufficient => On-Hold set immediately. If insufficient => flagged Unavailable.
+    + BM notified (FCM push + email): "Spare part request for Work Order [ID] from Technician [Name] requires your approval."
+    + Supervisor notified (FCM push): "Technician [Name] submitted a spare part request for Work Order [ID]."
+    + History log updated.
+    + Success toast: "Spare parts request submitted for Building Manager approval."
+    + Bottom sheet closes.
+
+4. Taps [Cancel] or drags sheet down => dismisses, no request created.
+
+Edge cases:
+- Technician submits request and BM declines => On-Hold released. Technician notified. Technician must decide whether to use Purchase Separately recording instead.
+- Spare Part dropdown empty => "No spare parts available for your scope."
+- Network times out => no request created; Technician can retry.
+
+################ ID 7.2.10 | (cont) > Technician Sign-off ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- CONFIRMED from WO Execution diagram: 3-step sign-off after checklist completion.
+- Step 1: MSP Technician A (this Technician) - always required.
+- Step 2: Building Technician (another MSP Tech) - always required.
+- Step 3: Tenant sign-off - configurable per plan (on/off).
+- Sign-off METHOD: PENDING confirmation (flagged for BA review).
+- After all sign-offs => Set Completed => status: Completed.
+--- FIELDS/COMPONENTS ---
+Embedded in WO Execution (triggered after [Submit & Sign Off]):
+
+Step 1 - Technician self sign-off:
+- System auto-records this Technician's sign-off + timestamp
+- Proceeds to Step 2 automatically
+
+Step 2 - Building Technician sign-off:
+- Prompt: Present device to Building Technician
+- Sign-off input - Method TBC (signature capture / confirm button)
+- [Confirm Sign-off] - Primary
+
+Step 3 - Tenant sign-off (if configured):
+- Prompt: Present device to Tenant
+- Sign-off input - Method TBC
+- [Confirm Sign-off] - Primary
+- Skip if Tenant sign-off not configured
+
+After all sign-offs:
+- System sets status: Completed
+- Supervisor notified: Work Order [ID] completed - ready for your review
+--- USER FLOW ---
+Flow: Technician Sign-off & Submit Work Order (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated. WO in Started status. Main Technician.
+- All required checklist items must be completed before submission is allowed.
+- All required Description fields filled and all required Photos uploaded.
+
+This is triggered by tapping [Submit & Sign Off] on WO Detail (button is disabled until all Required items are complete).
+
+1. Technician ensures all checklist items are done. Progress indicator shows "5 of 5 items done."
+2. [Submit & Sign Off] button becomes enabled (no longer grayed out).
+3. Technician taps [Submit & Sign Off].
+
+4. System validates ALL required fields (final validation before sign-off process begins):
+   4.1. Any Required Description field empty on any checklist item => inline validation:
+    + Checklist section scrolls to first incomplete item.
+    + Red highlight on incomplete item.
+    + Error toast: "Please complete all required checklist items before submitting."
+    + [Submit & Sign Off] remains disabled.
+   4.2. Any Required Photos section with 0 photos on any checklist item:
+    + Same behavior: scroll to first incomplete item, highlight, error toast.
+   4.3. All required fields complete => proceeds to Sign-off sequence.
+
+5. Sign-off sequence begins (3 steps in order):
+
+   STEP 1: MSP Technician A (this Technician)  ALWAYS REQUIRED
+   + Signature screen or confirmation screen shown:
+    - Title: "Your Sign-off"
+    - Message: "Sign off as MSP Technician A to confirm work completion."
+    - Sign-off method: ASSUMED = Button confirmation (tap [Sign Off] on device). Each party physically holds the device and taps to confirm. No signature capture or OTP in MVP.
+   + System records: Technician name + timestamp.
+   + Proceeds to Step 2.
+
+   STEP 2: Building Technician  ALWAYS REQUIRED
+   + Title: "Building Technician Sign-off"
+   + Message: "Have the Building Technician sign off to witness completion."
+   + Another MSP Technician (not this Technician) must confirm.
+   + Sign-off method: ASSUMED = Button confirmation. Building Technician holds the device and taps [Confirm] to witness completion.
+   + System records: Building Technician name/ID + timestamp.
+   + If Building Technician is not available: Supervisor may override (pending BA confirmation  flagged).
+   + Proceeds to Step 3.
+
+   STEP 3: Tenant  CONDITIONAL (based on Maintenance Plan configuration)
+   + If plan has "Tenant sign-off required = Yes":
+    - Title: "Tenant Sign-off"
+    - Message: "Have the Tenant confirm work completion."
+    - Sign-off method: ASSUMED = Button confirmation. Tenant holds the device and taps [Confirm] to acknowledge work completion.
+    - System records: Tenant name/ID + timestamp.
+   + If plan has "Tenant sign-off required = No" (or WO is Ad-hoc, not from plan):
+    - Step 3 is skipped automatically.
+
+6. After all required sign-offs collected:
+   + WO status => Completed.
+   + MSP Supervisor notified (FCM push + email): "Technician [Name] has completed Work Order [ID] and submitted for your review."
+   + History log: "Completed and signed off by [Technician Name] at [timestamp]. Sign-offs: [list]."
+   + Success toast: "Work order submitted for Supervisor review."
+   + Action buttons removed. WO Detail shows Completed status.
+
+Edge cases:
+- Building Technician not available on-site => pending client confirmation on how to handle. Flagged for BA review.
+- Any step's sign-off fails (network error) => error toast: "Failed to record sign-off. Please try again." => sign-off progress preserved (already completed steps not lost).
+- Technician accidentaly taps wrong button on sign-off screen => no undo after each individual sign-off step is confirmed (pending BA confirmation).
+- Sign-off method ASSUMED = Button confirmation for all 3 parties. No signature drawing or OTP required in MVP. Each party physically taps [Sign Off] / [Confirm] on the Technician's device.
+
+################ ID 7.2.11 | (cont) > Resubmit Work Order (after Completion Rejected) ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- WO returned with status: Completion Rejected.
+- Technician reviews rejection reason => corrects checklist/photos/parts => resubmits.
+- PENDING: whether checklist is preserved or reset after rejection.
+- Note: Resubmit is not a destructive action. No confirmation popup required - [Review & Resubmit] proceeds directly after validation.
+--- FIELDS/COMPONENTS ---
+Screen: WO Detail (status = Completion Rejected)
+- Rejection details section (read-only):
+  + Rejected by / Rejected time / Rejection Reason
+- [Review & Resubmit] - Button - Primary
+- Checklist items available for correction (7.2.6)
+- Photos can be updated (7.2.7)
+- Part Replacement can be updated (7.2.8)
+--- USER FLOW ---
+Flow: Resubmit Work Order after Completion Rejected (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- WO must be in Completion Rejected status.
+- Technician must be the Main Technician.
+
+1. Technician opens WO Detail (7.2.4). Red banner at top shows:
+   + "Rejected by Supervisor [Name] on [date]. Reason: [reason]."
+2. Technician reads the rejection reason carefully.
+
+3. Technician reviews execution content and makes corrections:
+
+   If checklist items need correction:
+   3a. Technician swipes to Execution tab.
+   3b. Taps on the relevant checklist item(s) to expand.
+   3c. Updates Description text and/or replaces/adds Photos.
+   3d. Checklist progress indicator shows current completion status.
+
+   If part replacement entries need correction:
+   3e. Technician removes incorrect entries and/or adds new entries.
+
+   Note: Whether checklist progress is PRESERVED (Technician corrects specific items) or RESET after rejection is PENDING client confirmation. Current assumption: preserved. Flagged for BA review.
+
+4. Technician taps [Review & Resubmit] at bottom of screen (Primary, full-width).
+
+5. System runs the same final validation as Submit & Sign Off (7.2.10 step 4):
+   5.1. Any Required Description empty => error toast: "Please complete all required checklist items." Scrolls to first incomplete item.
+   5.2. Any Required Photos missing => same error.
+   5.3. All valid => proceeds to sign-off sequence.
+
+6. Sign-off sequence restarts from Step 1 (same 3-step process as 7.2.10 step 5):
+   + All previous sign-offs are cleared. A fresh sign-off is required.
+   + Reason: work has been modified; all parties must re-confirm the corrected version.
+
+7. After all sign-offs collected:
+   + WO status => Completed (re-submitted).
+   + MSP Supervisor notified: "Technician [Name] has resubmitted Work Order [ID] after rejection."
+   + History log: "Resubmitted by [Technician Name] at [timestamp]. (After rejection.)"
+   + Success toast: "Work order resubmitted for Supervisor review."
+
+Edge cases:
+- Technician resubmits without making any changes to the rejected items => system does not block resubmission (validation only checks required field completion, not change detection). It is the Supervisor's responsibility to reject again if corrections are insufficient.
+- Technician's checklist was reset (if that is the confirmed behavior) => Technician must re-complete all items from scratch.
+- Network error during resubmission => "Failed to resubmit. Please try again." => WO remains in Completion Rejected.
+
+################ ID 7.3 | Asset (Read-only) > Asset (Read-only) ################
+
+################ ID 7.3.1 | Asset (Read-only) > View Asset List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Technician on mobile. Read-only.
+- Scoped to Technician's User Group: Building AND Asset System must both match.
+- Used to look up asset information on-site.
+- No create, edit, or deactivate actions.
+--- FIELDS/COMPONENTS ---
+Screen: Asset List (MSP Technician Mobile - Read-only)
+
+- Search bar - Placeholder: "Search by name or code"
+- [Scan QR] - Icon button - top-right - Opens QR scanner (shortcut to 7.3.3)
+- Filter icon - Opens filter panel:
+  + Building - Dropdown - Technician's group buildings only
+  + Asset System - Dropdown - Technician's group systems only
+  + Status - Dropdown - All / Active / Inactive
+- Asset list - Scrollable:
+  + Each item: Asset Code / Asset Name / Asset System / Location (Floor/Area) / Status badge
+  + Tap item => Asset Detail (7.3.2)
+- Pull-to-refresh
+- Empty state: "No assets found."
+- Load more on scroll
+
+No action buttons (read-only).
+--- USER FLOW ---
+Screen: Asset List (MSP Technician Mobile - Read-only)
+
+Preconditions:
+- MSP Technician authenticated. Scoped to User Group (Building AND Asset System must both match). Read-only.
+
+1. Technician navigates to Assets in bottom navigation.
+2. System loads assets matching User Group scope.
+3. List items: Asset Code / Asset Name / Asset System / Location (Floor/Area) / Status badge.
+4. [Scan QR] icon visible (top-right) => shortcut to QR scan (7.3.3).
+5. Technician taps search bar => searches by name or code.
+6. Technician taps filter icon => filter panel:
+   + Building (User Group buildings only) / Asset System (User Group systems only) / Status.
+   + [Apply] / [Reset].
+7. Technician taps asset item => Asset Detail (7.3.2).
+8. Technician pulls down => refreshes list.
+9. Infinite scroll => loads next page.
+10. No create/edit/deactivate actions. Read-only.
+11. Empty state: "No assets found within your scope."
+
+Edge cases:
+- Network unavailable => cached list with banner.
+- Camera permission not granted for QR => OS permission request; if denied => manual search only.
+
+################ ID 7.3.2 | (cont) > View Asset Detail ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Technician on mobile. Read-only.
+- Scoped to Technician's User Group scope.
+- Full asset detail: all sections + Maintenance History + Related WOs + Pending WOs.
+- QR code displayed for reference.
+- Accessible via Asset List or QR scan.
+--- FIELDS/COMPONENTS ---
+Screen: Asset Detail (MSP Technician Mobile - Read-only)
+
+- Back arrow
+- Asset Name - Display - Large bold title
+- Asset Code - Display - Subtitle
+- Status badge - Active / Inactive
+- QR Code - Display - Tap to zoom in
+
+Section: Asset Classification (read-only)
+- Asset System / Asset Sub-system / Asset Type
+
+Section: Location (read-only)
+- Building / Floor / Area/Unit
+
+Section: Asset Details (read-only)
+- Model / Serial Number / Brand / Purchase Date / Status
+
+Section: Maintenance History (read-only)
+- List: WO ID / Plan Name / Round / Completed Date / Technician / Status
+- Tap WO ID => WO Detail (7.2.4)
+- Empty state: "No maintenance history."
+
+Section: Pending WOs (read-only)
+- List: WO ID / Type / Assigned Date / Status
+- Tap WO ID => WO Detail (7.2.4)
+- Empty state: "No pending work orders."
+
+No action buttons - fully read-only.
+--- USER FLOW ---
+Screen: Asset Detail (MSP Technician Mobile - Read-only)
+
+Preconditions:
+- MSP Technician authenticated. Asset within User Group scope. Read-only.
+
+1. Technician taps asset from list OR navigates from QR scan => Asset Detail loads.
+2. System renders:
+   + Header: Asset Name (bold) / Asset Code / Status badge.
+   + QR Code image: tap to zoom full-screen.
+   + Classification section: Asset System / Sub-system / Asset Type.
+   + Location section: Building / Floor / Area/Unit.
+   + Asset Details section: Model / Serial Number / Brand / Purchase Date.
+3. Maintenance History section:
+   + Items: WO ID / Plan Name / Round / Completed Date / Technician / Status.
+   + Shows Closed WOs within Technician's scope only.
+   + Tap WO ID => WO Detail (7.2.4).
+   + Empty: "No maintenance history."
+4. Pending WOs section:
+   + Items: WO ID / Type / Status / Assigned Date.
+   + Technician taps WO ID => WO Detail (7.2.4).
+   + Empty: "No pending work orders."
+5. No Edit / Deactivate actions. Read-only.
+
+Primary use cases:
+- Technician looks up asset specs on-site (model, serial number) before starting work.
+- Technician checks maintenance history to understand what was done previously.
+- Technician navigates from QR scan when no active WO exists for this asset.
+
+Edge cases:
+- Technician scans QR for asset with an active WO => navigated to WO Detail (7.3.3 handles this routing).
+- WOs outside Technician's scope not shown in history sections.
+- Detail fails to load => "Failed to load asset details. Please go back and try again."
+
+################ ID 7.3.3 | (cont) > Scan Asset QR Code ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Technician scans asset QR code to quickly navigate to asset context.
+- QR code printed on physical asset.
+--- FIELDS/COMPONENTS ---
+Feature: QR Scanner (accessible from Asset List and WO Create form)
+- [Scan QR] - Icon button - Opens device camera
+- Camera overlay with scan frame
+--- USER FLOW ---
+Flow: Scan Asset QR Code (MSP Technician Mobile)
+
+Preconditions:
+- MSP Technician authenticated.
+- Camera permission must be granted.
+
+1. Technician taps [Scan QR] icon (accessible from Asset List header, WO Detail, or Create WO screen).
+2. Camera opens with a scan frame overlay.
+   + Scan frame highlights the target area for the QR code.
+   + Flash toggle icon for low-light conditions.
+   + [Cancel] button to exit without scanning.
+
+3. Technician points camera at the asset QR code:
+   3.1. QR code decoded successfully:
+    + System looks up the asset by the encoded asset URL/ID.
+
+   3.2. Asset found AND asset is within Technician's scope AND active WO exists for this asset (Assigned or Started, assigned to this Technician):
+    + System navigates directly to WO Detail (7.2.4) for that WO.
+    + Toast: "Work order found for [Asset Name]."
+
+   3.3. Asset found AND in scope AND no active WO exists:
+    + System navigates to Asset Detail (7.3.2).
+    + Toast: "No active work order for this asset."
+
+   3.4. Asset found BUT outside Technician's scope (wrong building or system):
+    + Does NOT navigate to asset.
+    + Error toast: "This asset is outside your scope."
+
+   3.5. Asset not found (QR code does not match any asset in system):
+    + Error toast: "Asset not found. Please check the QR code and try again."
+
+   3.6. QR code detected but cannot be decoded (corrupted, wrong format):
+    + Error toast: "Unable to read this QR code. Please try again or search manually."
+
+4. Camera fails to detect QR code within 30 seconds:
+   + Screen shows hint: "Having trouble? Make sure the QR code is well-lit and centered in the frame."
+
+5. Technician taps [Cancel] => camera closes, returns to previous screen.
+
+Edge cases:
+- Low light => Technician taps flash icon to turn on torch.
+- Multiple QR codes in frame => system reads the largest/clearest one; if ambiguous, prompts Technician to adjust.
+- QR code printed at an angle or on a curved surface => may require Technician to adjust angle for reliable scanning.
+- Camera permission not granted => error: "Camera permission required. Please enable in device Settings => App => Camera." => navigates to Settings or shows manual search as fallback.
+
+################ ID 7.3.4 | (cont) > View Asset Tags on Drawing (Read-only) ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Read-only drawing viewer on mobile.
+- Tap pin => asset info popup.
+- WebView implementation using pdfjs-dist.
+--- FIELDS/COMPONENTS ---
+Screen: Drawing Viewer (Technician Mobile)
+- Building selector
+- PDF viewer (pdfjs-dist WebView) + read-only tag pins
+- Pan + zoom via touch
+- Tag popup: Asset Name / Code / Type / System / Status / Last Maintenance / Link to Asset Detail
+--- USER FLOW ---
+Screen: View Asset Tags on Drawing (MSP Technician Mobile - Read-only)
+
+Preconditions:
+- MSP Technician authenticated. Building within User Group scope. Drawing must exist. Read-only.
+
+1. Technician navigates to Assets => Drawing (or Drawing tab).
+2. Selects Building from picker (User Group buildings only).
+3. System loads drawing:
+   + No drawing for building => "No drawing uploaded for this building."
+   + Drawing exists => PDF renders in viewer.
+4. Technician interactions:
+   + Pinch to zoom in/out.
+   + Drag to pan.
+   + Tag pins visible at saved coordinates.
+5. Technician taps a tag pin => bottom sheet or overlay popup:
+   + Asset Name / Asset Code / Asset Type / Asset System / Status badge / Last Maintenance Date.
+   + [View Asset Detail] button => navigates to Asset Detail (7.3.2).
+   + [Close] or drag down to dismiss.
+6. No [Edit Tags] button. Read-only.
+
+Primary use: Technician locates equipment on the building floor plan before going to the site area.
+
+Edge cases:
+- Building selector shows only User Group buildings; cannot select outside buildings.
+- Dense pin areas => zoom in to tap individual pins.
+- Large PDF loads progressively.
+- Tap pin for asset with active WO => popup shows status badge. Technician taps [View Asset Detail] => Asset Detail => taps WO ID in Pending WOs section => WO Detail.
+
+################ ID 7.3.5 | (cont) > View Spare Part List ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- Accessible by MSP Technician on mobile. Read-only.
+- Scoped to Technician's User Group scope: spare parts compatible with group's Asset Systems.
+- Primary use: check available stock before submitting a spare part request during WO execution.
+--- FIELDS/COMPONENTS ---
+Screen: Spare Part List (MSP Technician Mobile - Read-only)
+
+- Search bar - Placeholder: "Search by name or code"
+- Filter icon:
+  + Status - Dropdown - All / Active / Inactive
+- Spare Part list - Scrollable:
+  + Each item: Code / Name / Asset System / Available Stock / Total Stock / Status badge
+  + Tap item => read-only Spare Part Detail:
+    - All sections from web (1.6.6) in mobile layout
+    - Shows: Available / On-Hold / Total stock counters
+    - History log (recent entries)
+    - Read-only - no edit actions
+- Pull-to-refresh - updates stock levels
+- Empty state: "No spare parts found."
+- Load more on scroll
+--- USER FLOW ---
+Screen: Spare Part List (MSP Technician Mobile - Read-only)
+
+Preconditions:
+- MSP Technician authenticated. Scoped to User Group. Read-only.
+
+1. Technician navigates to Inventories in bottom navigation.
+2. System loads spare parts matching User Group scope.
+3. List items: Code / Name / Asset System / Available Stock (highlighted) / Total Stock / Status badge.
+4. Technician searches by name or code => real-time filter.
+5. Technician taps Status filter => All / Active / Inactive.
+6. Technician taps a spare part => read-only Spare Part Detail:
+   + Stock counters: Available (large, green) / On-Hold / Total.
+   + All sections in mobile-optimized layout (General Info / Stock Info / Supporting Info).
+   + Stock history log (last 10 entries, [Load more]).
+   + No edit actions.
+7. Technician pulls down => refreshes stock levels.
+8. Empty state: "No spare parts found within your scope."
+
+Primary use: Technician checks Available stock BEFORE submitting a spare part request (7.2.9) or before recording a Part Replacement (7.2.8). Prevents submitting a request that will be immediately flagged as Unavailable.
+
+Edge cases:
+- Available = 0 => highlighted in red; in-app label: "Out of stock."
+- Network unavailable => cached list with banner.
+
+################ ID 7.4 | Push Notification > Push Notification ################
+
+################ ID 7.4.1 | Push Notification > Receive Push Notification ################
+--- DESCRIPTION/ASSUMPTIONS ---
+- FCM delivery to MSP Technician mobile devices.
+- 11 trigger events: WO Assigned / WO from Plan / Added as Sub Tech / Completion Rejected / Ad-hoc Declined / Spare Part Approved / Rejected / Unavailable / WO Due Today / WO Overdue / WO Closed.
+- Online: immediate. Offline: FCM queues until reconnect (max 28 days).
+- Logout unregisters FCM token. Reinstall regenerates token.
+--- FIELDS/COMPONENTS ---
+Push notification (device OS) - System-triggered - No dedicated UI screen.
+
+Notification structure:
+- Title: short label
+- Body: descriptive message with WO ID / Part name
+- Action: deep link to relevant detail screen on tap
+
+In-app: bell icon with unread badge count.
+Foreground: in-app banner, auto-dismisses after 4 seconds.
+Background: OS system tray, badge count increments.
+Closed: OS notification, cold-start app on tap.
+--- USER FLOW ---
+System Process: Push Notification (MSP Technician Mobile)
+
+--- Delivery mechanism ---
+1. Backend sends payload to FCM for this Technician's account.
+2. Online => immediate. Offline => queued up to 28 days.
+
+--- Trigger events ---
+
+WO Assigned (Supervisor assigned, status = Assigned):
+Title: "New Work Order Assigned"
+Body: "Work Order [ID] for [Asset Name] at [Building] has been assigned to you."
+Action: opens WO Detail (7.2.4).
+
+WO from Maintenance Plan (auto-generated, pre-assigned):
+Title: "New Maintenance Work Order"
+Body: "Maintenance work order [ID] for [Asset Name] has been assigned to you."
+Action: opens WO Detail (7.2.4).
+
+Added as Sub Technician:
+Title: "Added to Work Order"
+Body: "You have been added as Sub Technician on Work Order [ID]."
+Action: opens WO Detail (7.2.4).
+
+Completion Rejected:
+Title: "Work Order Rejected"
+Body: "Work Order [ID] rejected by Supervisor. Please review and resubmit."
+Action: opens WO Detail (7.2.4) with Completion Rejected banner.
+
+Ad-hoc Request Declined:
+Title: "Ad-hoc Request Declined"
+Body: "Your ad-hoc request was declined. Tap to view and resubmit."
+Action: opens Ad-hoc Request List (7.2.2).
+
+Spare Part Request Approved by BM:
+Title: "Spare Part Request Approved"
+Body: "BM approved spare part request for Work Order [ID]."
+Action: opens WO Detail (7.2.4).
+
+Spare Part Request Rejected by BM:
+Title: "Spare Part Request Rejected"
+Body: "BM rejected spare part request for Work Order [ID]."
+Action: opens WO Detail (7.2.4).
+
+Spare Part Unavailable:
+Title: "Spare Part Unavailable"
+Body: "Requested spare part for Work Order [ID] is unavailable. BM notified."
+Action: opens WO Detail (7.2.4).
+
+WO Due Today:
+Title: "Work Order Due Today"
+Body: "Work Order [ID] is due today. Please start as soon as possible."
+Action: opens WO Detail (7.2.4).
+
+WO Overdue:
+Title: "Work Order Overdue"
+Body: "Work Order [ID] is overdue. Please complete and submit."
+Action: opens WO Detail (7.2.4).
+
+WO Closed (BM final sign-off):
+Title: "Work Order Closed"
+Body: "Work Order [ID] has been officially closed."
+Action: opens WO Detail (7.2.4).
+
+--- In-app handling ---
+Foreground: in-app banner auto-dismisses after 4 seconds.
+Background: OS tray, badge count increments.
+Closed: cold-start app and navigate to detail screen.
+
+--- Permissions ---
+First install: OS requests permission.
+Denied => no push notifications; in-app prompt to enable in Settings.
+Logout => FCM token unregistered.
+Reinstall => token regenerated on next login.
+
+Edge cases:
+- Notification for already-processed WO => shows current status.
+- Multiple offline notifications => batched delivery on reconnect.
+- FCM token changes => auto-refreshed on next app open.
