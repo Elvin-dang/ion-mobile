@@ -831,11 +831,6 @@ export default function WorkOrderDetailScreen() {
               )}
             </ElevatedCard>
 
-            {isTechActive ? (
-              <Button mode="outlined" icon="package-variant-closed" onPress={() => setTechRequestSheet(true)}>
-                Create Spare Parts Request
-              </Button>
-            ) : null}
 
             {wo.planName ? (
               <>
@@ -875,6 +870,13 @@ export default function WorkOrderDetailScreen() {
             </ElevatedCard>
           </>
         )}
+
+        {/* TECH Create Spare Parts Request — available when Assigned or Started (WBS 7.2.9) */}
+        {role === 'TECH' && ['Assigned', 'Started'].includes(status) ? (
+          <Button mode="outlined" icon="package-variant-closed" onPress={() => setTechRequestSheet(true)}>
+            Create Spare Parts Request
+          </Button>
+        ) : null}
 
         {/* SUP Request Spare Parts trigger (any active status) */}
         {role === 'SUP' &&
@@ -1342,6 +1344,12 @@ export default function WorkOrderDetailScreen() {
             </PressableScale>
             <ElevatedCard level="floating" style={{ borderBottomLeftRadius: 0, borderBottomRightRadius: 0, gap: spacing.sm }}>
               <Text style={sheetTitle()}>{isTech ? 'Create Spare Parts Request' : 'Request Spare Parts'}</Text>
+              {isTech ? (
+                <View style={{ flexDirection: 'row', gap: spacing.xs, alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="link-variant" size={14} color={theme.colors.onSurfaceVariant} />
+                  <Text style={{ fontSize: 13, color: theme.colors.onSurfaceVariant }}>Linked to {wo.id}</Text>
+                </View>
+              ) : null}
               <Text style={{ fontSize: 13, color: theme.colors.onSurfaceVariant }}>Spare Part *</Text>
               <Menu
                 visible={reqPartMenu}
